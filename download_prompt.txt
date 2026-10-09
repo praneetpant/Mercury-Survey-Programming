@@ -1,0 +1,293 @@
+Build a Windows Forms VB.NET application from scratch named "Mercury Survey Programming".
+
+Goal:
+Create a shareable Windows desktop app that lets authorized Dimensions users create or copy Mercury survey programming projects from GitHub templates, manage template configuration, upload template changes as a super user, and self-update from GitHub.
+
+Technology and project setup:
+- Use VB.NET Windows Forms.
+- Target .NET Framework 4.8.
+- The app name, assembly name, window title, installer display name, and Add/Remove Programs entry should be "Mercury Survey Programming".
+- Create the solution under D:\Codex\R&D\Download unless another workspace is specified.
+- The app must run on PCs that do not have Visual Studio installed.
+- First-time install should use one shareable setup.exe.
+- The setup should include everything needed by the app, including .NET Framework 4.8 installer support.
+- The installed app must not require Git or any other third-party app on the target PC.
+- For GitHub download/upload, use GitHub HTTPS/API/ZIP download logic from inside the app, not git.exe.
+- Use the Mercury logo as the app icon and ensure the icon has a white background so it does not look transparent.
+
+Configuration storage:
+- Store local user settings in AppData.
+- Store logs in AppData and append each app run, except clear old log before upload operations.
+- Keep shared editable JSON/configuration files beside the app EXE where appropriate so they are easy to find.
+- Sync shared configuration from GitHub repository https://github.com/praneetpant/setupshared.
+- Public shared configuration can be read without token.
+- Super users can update shared configuration and sync changes back to the shared repo using a separate shared-repo write token.
+- Project template repo tokens should be separate from shared configuration repo token.
+- Never require ordinary users to configure GitHub tokens.
+- Super users can edit/update tokens in the Super User section.
+- Tokens saved locally must be encrypted or protected so copying the file does not expose a usable plain token.
+- A small bundled/read-only bootstrap JSON or token file may be shipped only if needed for initial shared configuration sync.
+
+Startup flow:
+- On first run, if required options are missing, show a setup/options form first.
+- The setup/options form should ask for only:
+  - Dimensions URL(s)
+  - output root folder
+- The selected output root folder must be "Mercury Survey Programming" in a Dropbox-like path, for example:
+  D:\Mercury Analytics Dropbox\Praneet Pant\Mercury Survey Programming\
+- Do not show save location on the main project screen.
+- After setup/options, show the Dimensions login form.
+- On later runs, show only the login form unless setup is incomplete.
+- Login form should have:
+  - Dimensions server dropdown
+  - username
+  - password
+  - checkbox to save username/password
+  - Login
+  - Options
+  - Exit
+- Saved username/password must be encrypted/protected.
+- Validate login using the selected Dimensions server.
+- If login fails because of bad credentials, show a clear wrong username/password or wrong password message, not a generic error.
+- App should proceed only when login is authorized.
+- Exit button should exist only on Login and Main forms.
+
+Dimensions URLs:
+- Support storing more than one Dimensions URL.
+- Login form should offer a dropdown of saved Dimensions URLs.
+- Options menu should allow adding/removing Dimensions URLs.
+- The output folder should be derived from selected Dimensions URL and current year:
+  - User selects the root "Mercury Survey Programming" folder.
+  - If URL contains dimensions4.mercuryanalytics.com, final output base is <root>\dimensions4\<current-year>.
+  - If URL contains dimensions5.mercuryanalytics.com, final output base is <root>\dimensions5\<current-year>.
+  - If URL contains dimensions6.mercuryanalytics.com, final output base is <root>\dimensions6\<current-year>.
+  - Use the current system year, so it changes automatically on Jan 1.
+
+Template/repository JSON:
+- Use a JSON file for Dimensions URL to repository/template mappings so new templates can be added by editing JSON.
+- For dimensions5.mercuryanalytics.com, include at least:
+  - Classic template:
+    - display name: Old Classic Template
+    - repository URL: https://github.com/praneetpant/SHELL5.git
+    - old MDD name: SHELL5
+  - Modern template:
+    - display name: New Modern Template
+    - repository URL: https://github.com/praneetpant/Templates2026.git
+    - old MDD name: SHELL2026
+- On main form load, read all template lines/items from JSON and dynamically create one radio button per template.
+- Initially there should only be two template radio choices: Old Classic Template and New Modern Template.
+- If another template is added to JSON later, it should appear automatically.
+- Template JSON should also hold branch, repository URL, old MDD name, and token fields as needed.
+
+Main form:
+- Use a Help menu with:
+  - Options
+  - Check for Updates
+  - Version
+- Do not duplicate Options, Check Updates, or Version buttons on the main Project screen.
+- Main Project tab should have:
+  - Project Type radio group: New Project, Copy Project
+  - Project Name textbox
+  - Template radio group loaded from JSON, visible for New Project
+  - Existing Project field and Browse button, visible for Copy Project
+  - Create/Copy button
+  - Exit button
+  - status text
+  - progress bar/working animation
+  - current operation label
+- Do not show repository URL, branch, save location, or overwrite checkbox on the main screen.
+- There must never be an option to overwrite an existing project.
+- If the app would overwrite something, back it up/move it to a unique .old backup folder with timestamp, for example backup.oldDDMMYYHHMMSS.
+
+Project naming and folder logic:
+- User enters a project name.
+- If project name does not start with MA, automatically prepend MA.
+- Project name used inside files should be uppercase alphanumeric project name.
+- Extract the first 4-5 digit number before the next alphabetic character from the project name.
+- Root folder naming:
+  - If number folder does not exist, create <base>\<number> and copy project there.
+  - If <base>\<number> already exists, preserve existing content by copying/moving it into <base>\<number>\<number> if needed, then create the new folder inside <base>\<number> using number plus the next letter from the project name.
+  - Example: project name MA9999A, root number 9999.
+  - If <base>\9999 does not exist, create <base>\9999.
+  - If <base>\9999 exists, project MA9999A should go to <base>\9999\9999A.
+  - If <base>\9999\9999 or <base>\9999\9999A already exists and new project name says 9999A, show an error message saying 9999A already exists and create/use the next available alphabet suffix instead.
+- Never overwrite any project in any case.
+
+New Project behavior:
+- Download/copy all files from selected template repository.
+- Do not expose repo URL/branch fields to the user.
+- Download to a temp location outside Dropbox first.
+- In temp location, perform all renames and text replacements.
+- Finally move/copy the completed project into the Dropbox save location.
+- Remove files that should not be included in new projects:
+  - .gitattributes
+  - superusers.json
+- Rename folder PROJECTFILES to the full project name.
+- Rename files whose names contain the template old MDD name to the new uppercase project name.
+- Open editable/text files and replace any instance of old MDD name with the new uppercase project name.
+- Include .mdd and .mqd files in text replacement.
+- Replace text instances inside editable files broadly but avoid corrupting binary files.
+- For classic template old MDD name is SHELL5.
+- For modern template old MDD name is SHELL2026.
+
+Copy Project behavior:
+- Ask for Existing Project folder.
+- Copy contents of the selected existing project to a new project folder using the same folder naming rules.
+- Do not overwrite existing projects.
+- Determine old project name from the existing project and replace it with the new uppercase project name in:
+  - file names
+  - folder names as appropriate
+  - editable file contents
+  - .mdd and .mqd text contents
+- Also apply PROJECTFILES folder rename if relevant.
+- Use temp location outside Dropbox before final placement.
+
+Dropbox handling:
+- Because files may live in Dropbox, avoid in-place rename loops.
+- Copy/download to a temp location outside Dropbox first.
+- Rename and replace text in temp.
+- Finally place the completed project into the final Dropbox location.
+- Show working animation while long operations run in the background.
+- Show current operation status during download/copy/rename/final copy/upload/update.
+
+Logging:
+- Write an AppData log file.
+- Append log on each app run.
+- Log start, success, failures, project operations, update checks, uploads, skipped files, and useful diagnostics.
+- Before upload operations, clear the old log.
+- When upload completes and skipped files exist, show an option to open/view logs.
+
+Super User tab:
+- Only users in the superuser list can see the Super User tab.
+- Default superuser is login name praneetp and cannot be removed.
+- Super User tab should include:
+  - Manage Super Users clickable link
+  - GitHub Tokens button/section
+  - Template dropdown
+  - local folder picker for upload
+  - comments textbox
+  - Upload button
+  - progress/status/current operation
+- Manage Super Users form should:
+  - show the superuser list
+  - allow add/remove users
+  - prevent removing praneetp
+  - sync automatically on close, no separate Sync button
+- Superusers list should sync to GitHub/shared configuration.
+- Users not in superusers should not see the Super User tab.
+
+GitHub tokens:
+- For template repo operations, each template can have its own token.
+- Do not apply one token to all templates automatically.
+- Tokens can be read/write for superuser uploads.
+- Ordinary downloads should use configured token only when needed for private repos.
+- Token values must be encrypted/protected when saved locally.
+- Shared repository token and project repository tokens must be separate.
+
+Upload behavior:
+- Super users can upload a local template folder to the selected GitHub template repository.
+- Upload comments textbox should be available.
+- Commit message should automatically start with current user and upload date/time, followed by the user comments.
+- Example: Upload by praneetp on yyyy-MM-dd HH:mm:ss: user comment
+- Clear old log before upload starts.
+- Show upload progress bar and current operation.
+- Before uploading, check that selected folder directory structure matches the selected GitHub template repository root closely enough.
+- If selected folder does not match, show a clear error listing missing paths and ask user to select the template repository root folder.
+- Do allow selecting paths like D:\SHELL5 or Dropbox template roots if their structure matches.
+- When uploading, mirror directory structure changes to GitHub too:
+  - create new files
+  - update changed files
+  - delete files from GitHub that are missing locally, except protected/skipped files
+  - do not delete protected configuration files if the app relies on them
+- Show counts for created, updated, deleted, skipped unchanged.
+- Skipped details must be logged.
+- No delete option should exist for ordinary users or superusers outside the upload mirror behavior.
+
+Shared configuration:
+- Shared configuration lives in https://github.com/praneetpant/setupshared.
+- App should download shared JSON from this repo.
+- Changes to shared files should sync back to this repo for superusers with correct write token.
+- Do not show a separate "Shared Configuration" menu option.
+- Saving relevant configuration in the app should automatically sync to shared location when allowed.
+- If sync fails due to token permissions, show a clear message saying token needs Contents read/write access to praneetpant/setupshared.
+
+Installer:
+- Create a shareable one-file setup.exe.
+- Place final shareable installer at:
+  D:\Codex\R&D\Download\SETUP\setup.exe
+- App should appear in Windows Add/Remove Programs.
+- Avoid digital-signature installation errors as much as possible with unsigned installer constraints.
+- Include .NET Framework 4.8 redistributable support in setup for PCs that need it.
+- The installed app should not ask user to install Git or other dependencies.
+- First-time setup can be large because it includes dependencies.
+
+Auto update:
+- App should check for updates at startup.
+- App should also have Help > Check for Updates.
+- App should have Help > Version to show current version and installed path.
+- Update manifest should live in setupshared repo as app-update.json.
+- Manifest should include:
+  - version
+  - packageType: installer or exe
+  - installerUrl
+  - sha256
+  - required
+  - notes
+- Fetch manifest robustly:
+  - use raw GitHub URL with cache-busting/no-cache headers
+  - fall back to GitHub API contents endpoint and base64 decode content if raw fails
+  - use TLS 1.2
+  - log all update diagnostics
+- Show progress window during update download/install.
+- Avoid freezing UI during update checks/downloads.
+- For installed versions where EXE patching is unreliable, use full installer packageType.
+- For future versions after the updater is reliable, packageType exe may download only the main EXE to reduce update size.
+- If using EXE patch updates:
+  - download the EXE
+  - verify sha256
+  - launch helper/update script
+  - close the app cleanly so the running EXE is not locked
+  - replace the existing EXE after process exits
+  - restart the app
+- If using installer updates:
+  - download setup EXE
+  - verify sha256
+  - launch installer visibly
+  - close app or allow installer to proceed
+- Update flow should not leave the old app hanging/not responding.
+
+Known versions/features already implemented in prior work:
+- 1.1.7 added Help menu with Options, Check for Updates, Version.
+- 1.1.8 improved update detection with cache-busting and GitHub API fallback.
+- 1.1.9 removed duplicate Options, Check Updates, Version buttons from main Project screen and attempted small EXE update.
+- 1.1.10 was a repair update using full installer because older app downloaded the small EXE and did not finish updating.
+
+Validation and testing:
+- Build Release successfully with zero errors.
+- Test login failure shows correct wrong password/credentials message.
+- Test first-run setup flow.
+- Test new project creation:
+  - classic template
+  - modern template
+  - MA prefix
+  - folder numbering/suffix behavior
+  - no overwrite
+  - text replacement in .mdd/.mqd and editable files
+  - PROJECTFILES folder renamed
+  - .gitattributes and superusers.json removed
+- Test copy project:
+  - existing project copied to new project
+  - old project name replaced with new project name
+  - no overwrite
+- Test superuser visibility for praneetp and hidden tab for non-superuser.
+- Test upload structure validation and mirror behavior.
+- Test log creation and open log prompt after skipped uploads.
+- Test update check and update progress window.
+- Test final setup.exe on a machine without Visual Studio and without Git.
+
+Deliverables:
+- Full VB.NET WinForms solution.
+- Installer build scripts.
+- Published GitHub update manifest/release flow.
+- Final setup.exe copied to D:\Codex\R&D\Download\SETUP\setup.exe.
+- A README and a rebuild prompt text file documenting how to recreate the app from scratch.

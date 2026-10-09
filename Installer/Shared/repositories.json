@@ -1,0 +1,18 @@
+{
+  "dimensions5.mercuryanalytics.com": {
+    "classic": {
+      "repositoryUrl": "https://github.com/praneetpant/SHELL5.git",
+      "branch": "main",
+      "githubToken": "",
+      "githubTokenEncrypted": "",
+      "oldMddName": "SHELL5"
+    },
+    "modern": {
+      "repositoryUrl": "https://github.com/praneetpant/Templates2026.git",
+      "branch": "main",
+      "githubToken": "",
+      "githubTokenEncrypted": "",
+      "oldMddName": "SHELL2026"
+    }
+  }
+}

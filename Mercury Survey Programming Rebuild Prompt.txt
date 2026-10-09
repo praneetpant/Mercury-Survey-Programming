@@ -1,0 +1,73 @@
+Create a VB.NET Windows Forms solution named "Mercury Survey Programming" targeting .NET Framework 4.8. The app is a Windows desktop utility for Mercury Analytics survey project setup. Build the actual working application, not a prototype.
+
+The solution must contain one WinForms executable project named "Mercury Survey Programming" with assembly name "Mercury Survey Programming". Include an application icon and form icon support using a Mercury logo asset, with the icon embedded as the EXE icon and copied to the output folder under Assets.
+
+Core startup flow:
+On first run, if Dimensions URL or output root is missing, show a Setup form first. The Setup form must allow entering/selecting a Dimensions URL, adding more Dimensions URLs, selecting the Dropbox output root folder named exactly "Mercury Survey Programming", and opening a GitHub Tokens dialog. After setup, show a login form. On later runs, show only the login form unless settings are incomplete. The app must proceed to the main form only after the Dimensions login is authorized. The login form must have a Dimensions server dropdown, username/password fields, a "Save username and password" checkbox, Login, Options, and Exit buttons. Saved password and GitHub tokens must be encrypted using Windows current-user DPAPI so a copied settings file cannot expose reusable credentials. Exit should exist only on the login form and main form.
+
+Settings:
+Store user settings in %LOCALAPPDATA%\Mercury Survey Programming\settings.json. Store Dimensions URLs, selected Dimensions URL, output root folder, login auth mode and advanced field/marker settings, saved username/password, and superuser list. The output root folder must be named exactly "Mercury Survey Programming", such as D:\Mercury Analytics Dropbox\Praneet Pant\Mercury Survey Programming. The default superuser is "praneetp" and cannot be removed. Store repository mappings in a repositories.json file beside the EXE, not hidden in AppData. If an old AppData repository mapping exists and the EXE-side file is missing, copy/migrate it beside the EXE.
+
+Repository JSON:
+Use this default repositories.json structure:
+{
+  "dimensions5.mercuryanalytics.com": {
+    "classic": {
+      "repositoryUrl": "https://github.com/praneetpant/SHELL5.git",
+      "branch": "main",
+      "githubToken": "",
+      "githubTokenEncrypted": "",
+      "oldMddName": "SHELL5"
+    },
+    "modern": {
+      "repositoryUrl": "https://github.com/praneetpant/Templates2026.git",
+      "branch": "main",
+      "githubToken": "",
+      "githubTokenEncrypted": "",
+      "oldMddName": "SHELL2026"
+    }
+  }
+}
+Treat Dimensions URLs as matched by host, ignoring http/https and path where reasonable. A Dimensions URL is valid for New Project only if it has a matching repository entry. Adding another template line under a Dimensions server must automatically add another template radio option on the main form. Display "classic" as "Old Classic Template", "modern" as "New Modern Template", and title-case other template keys with "Template" appended. Also support older shorthand template entries where the template value is just the repository URL.
+
+GitHub tokens:
+Provide a GitHub Tokens dialog available from Setup/Options. It must allow selecting Dimensions URL and template, pasting one token for that template, and saving it encrypted into githubTokenEncrypted while keeping githubToken blank. Plain githubToken/token/accessToken in JSON may be accepted as paste-once fallback, then rewritten encrypted on save. Tokens are per template, not apply-to-all.
+
+Dimensions login:
+Implement DimensionsAuthenticator with form POST and basic auth support. Defaults should use form authentication with fields named username and password. Provide advanced settings in Options for authentication mode, username field, password field, optional success marker text, and optional failure marker text. Success/failure marker text is optional and only used when HTTP status alone cannot distinguish valid from invalid login.
+
+Main form:
+After login, show a main form with a tab control. The Project tab must allow selecting New Project or Copy Project. For New Project, show template radio options generated from repositories.json. For Copy Project, show an existing project folder field and Browse button. Always ask for Project Name. Do not show repository URL, branch, save location, or overwrite controls on the main form. Provide Options, Create/Copy, and Exit buttons. Include a progress bar, working animation, and current operation/status label while background operations run. All long operations must run async so the UI stays responsive. Log status, successes, and failures to an append-only log file somewhere under %LOCALAPPDATA%\Mercury Survey Programming.
+
+Project naming and folder rules:
+Normalize project names so they start with "MA"; if the user does not type MA, prepend MA automatically. Before project placement, calculate the final project save location from the selected Dimensions URL and current system year: dimensions4.mercuryanalytics.com saves under <output root>\dimensions4\YYYY, dimensions5.mercuryanalytics.com saves under <output root>\dimensions5\YYYY, dimensions6 under dimensions6, and so on. The year must update automatically on January 1 by using DateTime.Now.Year. For text replacement, use the uppercase alphanumeric project name. Extract the first 4 or 5 digit project number from the project name before the next alphabetic suffix and use that number to determine the root folder inside the calculated <output root>\dimensionsN\YYYY directory. If the root number folder does not exist, create <output root>\dimensionsN\YYYY\<number> and place the project there. If that number folder already exists, ensure the existing root content is archived into <output root>\dimensionsN\YYYY\<number>\<number> if that archive folder does not already exist, then place the new project into <output root>\dimensionsN\YYYY\<number>\<number plus next alphabetic suffix from the project name>. If a specific target such as <output root>\dimensionsN\YYYY\9999\9999 or <output root>\dimensionsN\YYYY\9999\9999A already exists and the new project says 9999A, do not overwrite it; show an error saying that project already exists and create/select the next available alphabetic suffix. In any case where the app must replace an existing target, first move that target to a unique timestamped backup named projectname.oldDDMMYYHHMMSS. Never overwrite an existing project silently.
+
+New Project behavior:
+For New Project, download all files from the selected GitHub repository. Do not show repository URL, branch, save location, or overwrite UI fields. Use GitHub API archive download with token when available so the app works on machines without Visual Studio or Git. If that fails and Git is installed, optionally fall back to git clone. Read the configured branch, defaulting to main. Download/extract/copy to a temporary local folder outside Dropbox/save location first. In that temporary folder, replace text instances of the template oldMddName inside editable files, including .mdd and .mqd files, with the new uppercase alphanumeric project name. Rename all files and folders whose names contain oldMddName to the new uppercase alphanumeric project name. Rename any folder named PROJECTFILES to the uppercase alphanumeric project name. Remove repository-only files named .gitattributes and superusers.json from new project folders. Then place the finished project into the configured save location using the folder rules above.
+
+Copy Project behavior:
+For Copy Project, ask for an existing project folder. Copy that folder to a temporary location outside Dropbox/save location first. Detect the old project name from the existing folder/project contents as best as possible, and replace old project name text inside editable files, including .mdd and .mqd files, with the new uppercase alphanumeric project name. Rename matching files/folders, and rename any folder named PROJECTFILES to the uppercase alphanumeric project name. Then place the finished project into the configured save location using the same non-overwrite folder rules.
+
+Dropbox/locked files:
+Avoid repeated rename loops inside Dropbox. Perform download/copy and renaming in a temporary folder outside Dropbox/save location, then copy the finalized folder into the save location. Use retry logic around file operations for transient file locks, and log failures.
+
+Editable text handling:
+Only open and replace text in likely editable text files. Avoid binary files. Use safe read/write retry helpers. Replace text case-insensitively where appropriate. Rename child files/folders deepest-first so folder renames do not break traversal.
+
+Super User tab:
+Only show a Super User tab when the authorized Dimensions username is in the superuser list. On startup after successful login, try to download superusers.json from GitHub using the first available configured template token, then decide whether to show the tab. If sync fails, log it but do not block login. The Super User tab must include a clickable "Manage Super Users" link at the top, a template dropdown, a local folder selector, Upload button, progress bar, and status label. Do not include a commit message textbox. Generate upload commit messages automatically using the authorized Dimensions username and upload date/time, for example "Upload by praneetp on 2026-09-04 01:24:46".
+
+Manage Super Users dialog:
+The Manage Super Users link opens a dialog listing superuser login names, with Add, Remove, and Close buttons. Do not include a separate Sync button. Add/remove changes update local settings immediately and mark the dialog dirty. When the dialog closes, if there were changes, automatically upload the list to GitHub as superusers.json in the selected template repository. If sync fails, keep the dialog open and show/log the error. "praneetp" must always be present and cannot be removed.
+
+Super User upload:
+Superuser template upload must use the selected template's repository URL, branch, and encrypted GitHub token. Before uploading, check that the selected local folder matches the selected GitHub repository root structure: required files/folders currently in the repository must exist in the selected local folder. If required repository paths are missing, stop before uploading and show the missing paths. Ignore repository housekeeping files .gitattributes, superusers.json, and .bak backup files for this structure check. Extra local files are allowed and should be uploaded. Exclude .git, .vs, bin, obj, node_modules, .gitattributes, superusers.json, and .bak backup files from template folder upload. Upload creates or updates files through the GitHub Contents API and skips unchanged files when comparable remote content is available. Show the current upload operation and a progress bar; once the upload file list is known, make the progress bar determinate by file count. Every skipped unchanged file must be written to the app log, and if upload completes with any skipped files, show an option to open the log file. It must not delete files from the repository.
+
+Logging:
+Create an AppLogger that writes append-only logs under %LOCALAPPDATA%\Mercury Survey Programming, including startup, login, setup/options saves, project creation/copy steps, GitHub download/upload status, superuser sync, and errors with exception details.
+
+Packaging expectations:
+The app should run on machines without Visual Studio. It may require .NET Framework 4.8 runtime. Keep repositories.json beside the EXE for easy future editing. Build Debug and Release configurations. Prepare the project so it can later be packaged into an installer EXE.
+
+Implementation requirements:
+Use VB.NET WinForms, System.Net.Http for GitHub/API calls, System.IO.Compression for ZIP extraction, System.Security.Cryptography.ProtectedData for encrypted saved secrets, async/await for network and file operations, and plain JSON helpers or a compatible .NET Framework JSON approach without requiring unavailable packages. Keep UI simple and functional. Include README.md documenting build/run/setup, repositories.json, tokens, project flow, superuser behavior, logging, and upload rules.
