@@ -11,8 +11,10 @@ Installer/Package/
 Installer/Redist/
 Installer/Shared/shared-config-token.txt
 Installer/Shared/source-repo-token.txt
+Installer/Shared/token-backup.json
 **/shared-config-token.txt
 **/source-repo-token.txt
+**/token-backup.json
 
 *.xlsx
 *.xls
