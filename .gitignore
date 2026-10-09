@@ -10,7 +10,9 @@ Installer/Output/
 Installer/Package/
 Installer/Redist/
 Installer/Shared/shared-config-token.txt
+Installer/Shared/source-repo-token.txt
 **/shared-config-token.txt
+**/source-repo-token.txt
 
 *.xlsx
 *.xls
