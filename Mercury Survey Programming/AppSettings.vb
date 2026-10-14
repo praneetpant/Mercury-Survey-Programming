@@ -192,6 +192,7 @@ Public Class AppSettings
         DimensionsUrl = NormalizeDimensionsLoginUrl(DimensionsUrl)
         DimensionsUrls = NormalizeUrls(DimensionsUrls)
         SavedCredentialsByUrl = NormalizeSavedCredentials(SavedCredentialsByUrl)
+        NormalizeRepositoryMappingStorageKeys()
         SuperUsers = NormalizeSuperUsers(SuperUsers)
 
         If Not SuperUsers.Contains(DefaultSuperUser) Then
@@ -342,16 +343,20 @@ Public Class AppSettings
         ApplyDefaults()
         AddDimensionsUrl(normalizedUrl)
 
-        Dim mappingKey = NormalizeRepositoryMappingKey(normalizedUrl)
+        Dim mappingKey = GetRepositoryMappingStorageKey(normalizedUrl)
         If RepositoryMappings Is Nothing Then
             RepositoryMappings = New Dictionary(Of String, RepositoryTemplateMapping)(StringComparer.OrdinalIgnoreCase)
         End If
 
-        If Not RepositoryMappings.ContainsKey(mappingKey) Then
-            RepositoryMappings(mappingKey) = New RepositoryTemplateMapping()
+        Dim mapping = GetRepositoryMappingForDimensionsUrl(normalizedUrl)
+        If mapping Is Nothing Then
+            If Not RepositoryMappings.ContainsKey(mappingKey) Then
+                RepositoryMappings(mappingKey) = New RepositoryTemplateMapping()
+            End If
+
+            mapping = RepositoryMappings(mappingKey)
         End If
 
-        Dim mapping = RepositoryMappings(mappingKey)
         If keepExistingTokenWhenBlank AndAlso String.IsNullOrWhiteSpace(cleanedGithubToken) Then
             cleanedGithubToken = mapping.GetGithubToken(cleanedTemplateKey)
         End If
@@ -372,7 +377,7 @@ Public Class AppSettings
 
         mapping.RemoveTemplate(cleanedTemplateKey)
         If mapping.GetTemplateKeys().Count = 0 Then
-            Dim mappingKey = NormalizeRepositoryMappingKey(NormalizeDimensionsLoginUrl(dimensionsUrl))
+            Dim mappingKey = GetRepositoryMappingKeyForDimensionsUrl(dimensionsUrl)
             If RepositoryMappings IsNot Nothing AndAlso RepositoryMappings.ContainsKey(mappingKey) Then
                 RepositoryMappings.Remove(mappingKey)
             End If
@@ -480,6 +485,43 @@ Public Class AppSettings
         ApplyDefaults()
         Return SerializeRepositoryMappingsJson()
     End Function
+
+    Private Sub NormalizeRepositoryMappingStorageKeys()
+        If RepositoryMappings Is Nothing Then
+            RepositoryMappings = New Dictionary(Of String, RepositoryTemplateMapping)(StringComparer.OrdinalIgnoreCase)
+            Return
+        End If
+
+        Dim normalizedMappings = New Dictionary(Of String, RepositoryTemplateMapping)(StringComparer.OrdinalIgnoreCase)
+        For Each mappingEntry In RepositoryMappings.ToList()
+            Dim storageKey = GetRepositoryMappingStorageKey(mappingEntry.Key)
+            If String.IsNullOrWhiteSpace(storageKey) Then
+                Continue For
+            End If
+
+            If Not normalizedMappings.ContainsKey(storageKey) Then
+                normalizedMappings(storageKey) = New RepositoryTemplateMapping()
+            End If
+
+            Dim targetMapping = normalizedMappings(storageKey)
+            If mappingEntry.Value Is Nothing Then
+                Continue For
+            End If
+
+            For Each templateKey As String In mappingEntry.Value.GetTemplateKeys()
+                If targetMapping.GetTemplateInfo(templateKey) IsNot Nothing Then
+                    Continue For
+                End If
+
+                Dim templateInfo = mappingEntry.Value.GetTemplateInfo(templateKey)
+                If templateInfo IsNot Nothing Then
+                    targetMapping.SetTemplateInfo(templateKey, templateInfo.RepositoryUrl, templateInfo.OldMddName, templateInfo.Branch, templateInfo.GithubToken)
+                End If
+            Next
+        Next
+
+        RepositoryMappings = normalizedMappings
+    End Sub
 
     Public Async Function UploadSuperUsersToGithubAsync(templateKey As String) As Task
         Dim githubToken = GetSharedConfigurationWriteToken(templateKey)
@@ -592,6 +634,15 @@ Public Class AppSettings
     End Function
 
     Private Function GetRepositoryMappingForDimensionsUrl(dimensionsUrl As String) As RepositoryTemplateMapping
+        Dim mappingKey = GetRepositoryMappingKeyForDimensionsUrl(dimensionsUrl)
+        If String.IsNullOrWhiteSpace(mappingKey) Then
+            Return Nothing
+        End If
+
+        Return RepositoryMappings(mappingKey)
+    End Function
+
+    Private Function GetRepositoryMappingKeyForDimensionsUrl(dimensionsUrl As String) As String
         If RepositoryMappings Is Nothing OrElse String.IsNullOrWhiteSpace(dimensionsUrl) Then
             Return Nothing
         End If
@@ -606,7 +657,7 @@ Public Class AppSettings
             If normalizedUrl.Equals(normalizedKey, StringComparison.OrdinalIgnoreCase) OrElse
                 normalizedUrl.StartsWith(normalizedKey & "/", StringComparison.OrdinalIgnoreCase) OrElse
                 normalizedUrl.StartsWith(normalizedKey & ":", StringComparison.OrdinalIgnoreCase) Then
-                Return mapping.Value
+                Return mapping.Key
             End If
         Next
 
@@ -1000,6 +1051,17 @@ Public Class AppSettings
         normalized = Regex.Replace(normalized, "^https?://", String.Empty)
         normalized = normalized.Trim("/"c, " "c)
         Return normalized
+    End Function
+
+    Private Shared Function GetRepositoryMappingStorageKey(value As String) As String
+        Dim cleaned = NormalizeDimensionsLoginUrl(value)
+        Dim uri As Uri = Nothing
+        If Uri.TryCreate(cleaned, UriKind.Absolute, uri) AndAlso
+            Regex.IsMatch(uri.Host, "^dimensions\d+\.mercuryanalytics\.com$", RegexOptions.IgnoreCase) Then
+            Return uri.Host.ToLowerInvariant()
+        End If
+
+        Return NormalizeRepositoryMappingKey(cleaned)
     End Function
 
     Private Shared Function NormalizeTemplateKey(value As String) As String
