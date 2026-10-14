@@ -37,6 +37,7 @@ Public Class AppSettings
     Public Property SaveLoginCredentials As Boolean
     Public Property SavedUsername As String
     Public Property SavedPasswordEncrypted As String
+    Public Property SavedCredentialsByUrl As New Dictionary(Of String, SavedLoginCredential)(StringComparer.OrdinalIgnoreCase)
     Public Property SharedConfigurationGithubTokenEncrypted As String
     Public Property SuperUsers As New List(Of String)()
 
@@ -92,6 +93,7 @@ Public Class AppSettings
                 .SaveLoginCredentials = GetBooleanValue(values, NameOf(SaveLoginCredentials)),
                 .SavedUsername = GetValue(values, NameOf(SavedUsername)),
                 .SavedPasswordEncrypted = GetValue(values, NameOf(SavedPasswordEncrypted)),
+                .SavedCredentialsByUrl = ParseSavedCredentials(GetValue(values, NameOf(SavedCredentialsByUrl))),
                 .SharedConfigurationGithubTokenEncrypted = GetValue(values, NameOf(SharedConfigurationGithubTokenEncrypted)),
                 .SuperUsers = ParseList(GetValue(values, NameOf(SuperUsers)))
             }
@@ -120,6 +122,7 @@ Public Class AppSettings
             CreateLine(NameOf(SaveLoginCredentials), SaveLoginCredentials.ToString()),
             CreateLine(NameOf(SavedUsername), SavedUsername),
             CreateLine(NameOf(SavedPasswordEncrypted), SavedPasswordEncrypted),
+            CreateLine(NameOf(SavedCredentialsByUrl), SerializeSavedCredentials()),
             CreateLine(NameOf(SharedConfigurationGithubTokenEncrypted), SharedConfigurationGithubTokenEncrypted),
             CreateLine(NameOf(SuperUsers), String.Join(Environment.NewLine, NormalizeSuperUsers(SuperUsers).ToArray()))
         }
@@ -188,6 +191,7 @@ Public Class AppSettings
 
         DimensionsUrl = NormalizeDimensionsLoginUrl(DimensionsUrl)
         DimensionsUrls = NormalizeUrls(DimensionsUrls)
+        SavedCredentialsByUrl = NormalizeSavedCredentials(SavedCredentialsByUrl)
         SuperUsers = NormalizeSuperUsers(SuperUsers)
 
         If Not SuperUsers.Contains(DefaultSuperUser) Then
@@ -209,6 +213,15 @@ Public Class AppSettings
 
         If String.IsNullOrWhiteSpace(DimensionsUrl) AndAlso DimensionsUrls.Count > 0 Then
             DimensionsUrl = DimensionsUrls(0)
+        End If
+
+        If SaveLoginCredentials AndAlso Not String.IsNullOrWhiteSpace(DimensionsUrl) AndAlso
+            Not String.IsNullOrWhiteSpace(SavedUsername) AndAlso Not String.IsNullOrWhiteSpace(SavedPasswordEncrypted) AndAlso
+            Not SavedCredentialsByUrl.ContainsKey(NormalizeRepositoryMappingKey(DimensionsUrl)) Then
+            SavedCredentialsByUrl(NormalizeRepositoryMappingKey(DimensionsUrl)) = New SavedLoginCredential With {
+                .Username = SavedUsername,
+                .PasswordEncrypted = SavedPasswordEncrypted
+            }
         End If
 
         If RepositoryMappings Is Nothing Then
@@ -596,12 +609,28 @@ Public Class AppSettings
     End Function
 
     Public Function GetSavedPassword() As String
-        If String.IsNullOrWhiteSpace(SavedPasswordEncrypted) Then
+        Return GetSavedPasswordForUrl(DimensionsUrl)
+    End Function
+
+    Public Function GetSavedUsernameForUrl(url As String) As String
+        Dim credential = GetSavedCredentialForUrl(url)
+        If credential IsNot Nothing Then
+            Return credential.Username
+        End If
+
+        Return If(SavedUsername, String.Empty)
+    End Function
+
+    Public Function GetSavedPasswordForUrl(url As String) As String
+        Dim credential = GetSavedCredentialForUrl(url)
+        Dim encryptedPassword = If(credential Is Nothing, SavedPasswordEncrypted, credential.PasswordEncrypted)
+
+        If String.IsNullOrWhiteSpace(encryptedPassword) Then
             Return String.Empty
         End If
 
         Try
-            Dim encryptedBytes = Convert.FromBase64String(SavedPasswordEncrypted)
+            Dim encryptedBytes = Convert.FromBase64String(encryptedPassword)
             Dim plainBytes = ProtectedData.Unprotect(encryptedBytes, Nothing, DataProtectionScope.CurrentUser)
             Return Encoding.UTF8.GetString(plainBytes)
         Catch
@@ -610,19 +639,59 @@ Public Class AppSettings
     End Function
 
     Public Sub SetSavedCredentials(username As String, password As String)
+        SetSavedCredentialsForUrl(DimensionsUrl, username, password)
+    End Sub
+
+    Public Sub SetSavedCredentialsForUrl(url As String, username As String, password As String)
+        Dim normalizedUrl = NormalizeDimensionsLoginUrl(url)
+        If String.IsNullOrWhiteSpace(normalizedUrl) Then
+            normalizedUrl = DimensionsUrl
+        End If
+
         SaveLoginCredentials = True
         SavedUsername = If(username, String.Empty)
 
         Dim plainBytes = Encoding.UTF8.GetBytes(If(password, String.Empty))
         Dim encryptedBytes = ProtectedData.Protect(plainBytes, Nothing, DataProtectionScope.CurrentUser)
         SavedPasswordEncrypted = Convert.ToBase64String(encryptedBytes)
+
+        If SavedCredentialsByUrl Is Nothing Then
+            SavedCredentialsByUrl = New Dictionary(Of String, SavedLoginCredential)(StringComparer.OrdinalIgnoreCase)
+        End If
+
+        SavedCredentialsByUrl(NormalizeRepositoryMappingKey(normalizedUrl)) = New SavedLoginCredential With {
+            .Username = SavedUsername,
+            .PasswordEncrypted = SavedPasswordEncrypted
+        }
     End Sub
 
     Public Sub ClearSavedCredentials()
-        SaveLoginCredentials = False
+        ClearSavedCredentialsForUrl(DimensionsUrl)
+    End Sub
+
+    Public Sub ClearSavedCredentialsForUrl(url As String)
+        Dim normalizedKey = NormalizeRepositoryMappingKey(NormalizeDimensionsLoginUrl(url))
+        If SavedCredentialsByUrl IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(normalizedKey) AndAlso SavedCredentialsByUrl.ContainsKey(normalizedKey) Then
+            SavedCredentialsByUrl.Remove(normalizedKey)
+        End If
+
+        SaveLoginCredentials = SavedCredentialsByUrl IsNot Nothing AndAlso SavedCredentialsByUrl.Count > 0
         SavedUsername = String.Empty
         SavedPasswordEncrypted = String.Empty
     End Sub
+
+    Private Function GetSavedCredentialForUrl(url As String) As SavedLoginCredential
+        If SavedCredentialsByUrl Is Nothing Then
+            Return Nothing
+        End If
+
+        Dim normalizedKey = NormalizeRepositoryMappingKey(NormalizeDimensionsLoginUrl(url))
+        If Not String.IsNullOrWhiteSpace(normalizedKey) AndAlso SavedCredentialsByUrl.ContainsKey(normalizedKey) Then
+            Return SavedCredentialsByUrl(normalizedKey)
+        End If
+
+        Return Nothing
+    End Function
 
     Public Sub SelectDimensionsUrl(url As String)
         DimensionsUrl = NormalizeDimensionsLoginUrl(url)
@@ -660,6 +729,10 @@ Public Class AppSettings
                     RepositoryMappings.Remove(mappingKey)
                 End If
             Next
+        End If
+
+        If SavedCredentialsByUrl IsNot Nothing AndAlso SavedCredentialsByUrl.ContainsKey(normalizedKey) Then
+            SavedCredentialsByUrl.Remove(normalizedKey)
         End If
 
         If String.Equals(NormalizeRepositoryMappingKey(DimensionsUrl), normalizedKey, StringComparison.OrdinalIgnoreCase) Then
@@ -705,6 +778,53 @@ Public Class AppSettings
     Private Shared Function CreateLine(key As String, value As String) As String
         Dim encodedValue = Convert.ToBase64String(Encoding.UTF8.GetBytes(If(value, String.Empty)))
         Return key & "=" & encodedValue
+    End Function
+
+    Private Function SerializeSavedCredentials() As String
+        Dim lines = New List(Of String)()
+        Dim normalizedCredentials = NormalizeSavedCredentials(SavedCredentialsByUrl)
+
+        For Each key As String In normalizedCredentials.Keys.OrderBy(Function(value) value, StringComparer.OrdinalIgnoreCase)
+            Dim credential = normalizedCredentials(key)
+            lines.Add(Uri.EscapeDataString(key) & Convert.ToChar(9) &
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(If(credential.Username, String.Empty))) & Convert.ToChar(9) &
+                If(credential.PasswordEncrypted, String.Empty))
+        Next
+
+        Return String.Join(Environment.NewLine, lines.ToArray())
+    End Function
+
+    Private Shared Function ParseSavedCredentials(value As String) As Dictionary(Of String, SavedLoginCredential)
+        Dim credentials = New Dictionary(Of String, SavedLoginCredential)(StringComparer.OrdinalIgnoreCase)
+        If String.IsNullOrWhiteSpace(value) Then
+            Return credentials
+        End If
+
+        For Each line As String In value.Split(New String() {Environment.NewLine}, StringSplitOptions.RemoveEmptyEntries)
+            Dim parts = line.Split(Convert.ToChar(9))
+            If parts.Length < 3 Then
+                Continue For
+            End If
+
+            Dim key = NormalizeRepositoryMappingKey(Uri.UnescapeDataString(parts(0)))
+            If String.IsNullOrWhiteSpace(key) Then
+                Continue For
+            End If
+
+            Dim username = String.Empty
+            Try
+                username = Encoding.UTF8.GetString(Convert.FromBase64String(parts(1)))
+            Catch
+                username = String.Empty
+            End Try
+
+            credentials(key) = New SavedLoginCredential With {
+                .Username = username,
+                .PasswordEncrypted = parts(2)
+            }
+        Next
+
+        Return credentials
     End Function
 
     Private Shared Function LoadRepositoryMappings() As Dictionary(Of String, RepositoryTemplateMapping)
@@ -1272,6 +1392,27 @@ Public Class AppSettings
         Return normalized
     End Function
 
+    Private Shared Function NormalizeSavedCredentials(credentials As Dictionary(Of String, SavedLoginCredential)) As Dictionary(Of String, SavedLoginCredential)
+        Dim normalized = New Dictionary(Of String, SavedLoginCredential)(StringComparer.OrdinalIgnoreCase)
+        If credentials Is Nothing Then
+            Return normalized
+        End If
+
+        For Each item In credentials
+            Dim normalizedKey = NormalizeRepositoryMappingKey(NormalizeDimensionsLoginUrl(item.Key))
+            If String.IsNullOrWhiteSpace(normalizedKey) OrElse item.Value Is Nothing Then
+                Continue For
+            End If
+
+            normalized(normalizedKey) = New SavedLoginCredential With {
+                .Username = If(item.Value.Username, String.Empty),
+                .PasswordEncrypted = If(item.Value.PasswordEncrypted, String.Empty)
+            }
+        Next
+
+        Return normalized
+    End Function
+
     Private Shared Function NormalizeSuperUsers(users As List(Of String)) As List(Of String)
         Dim normalized = New List(Of String)()
         If users Is Nothing Then
@@ -1462,4 +1603,9 @@ Public Class RepositoryAccessInfo
     Public Property RepositoryUrl As String
     Public Property Branch As String
     Public Property GithubToken As String
+End Class
+
+Public Class SavedLoginCredential
+    Public Property Username As String
+    Public Property PasswordEncrypted As String
 End Class

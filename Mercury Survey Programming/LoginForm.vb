@@ -43,6 +43,7 @@ Public Class LoginForm
         _serverComboBox.Size = New Size(310, 24)
         _serverComboBox.DropDownStyle = ComboBoxStyle.DropDownList
         RefreshServerList()
+        AddHandler _serverComboBox.SelectedIndexChanged, AddressOf ServerSelectionChanged
 
         Dim usernameLabel = New Label() With {.Text = "Username", .Location = New Point(24, 96), .AutoSize = True}
         _usernameTextBox.Location = New Point(124, 92)
@@ -58,10 +59,7 @@ Public Class LoginForm
         _saveCredentialsCheckBox.Size = New Size(230, 24)
         _saveCredentialsCheckBox.Checked = _settings.SaveLoginCredentials
 
-        If _settings.SaveLoginCredentials Then
-            _usernameTextBox.Text = _settings.SavedUsername
-            _passwordTextBox.Text = _settings.GetSavedPassword()
-        End If
+        LoadSavedCredentialsForSelectedServer()
 
         _statusLabel.Location = New Point(24, 198)
         _statusLabel.Size = New Size(410, 28)
@@ -122,6 +120,20 @@ Public Class LoginForm
         End If
     End Sub
 
+    Private Sub ServerSelectionChanged(sender As Object, e As EventArgs)
+        LoadSavedCredentialsForSelectedServer()
+    End Sub
+
+    Private Sub LoadSavedCredentialsForSelectedServer()
+        Dim selectedUrl = If(_serverComboBox.SelectedItem Is Nothing, _settings.DimensionsUrl, CStr(_serverComboBox.SelectedItem))
+        Dim savedUsername = _settings.GetSavedUsernameForUrl(selectedUrl)
+        Dim savedPassword = _settings.GetSavedPasswordForUrl(selectedUrl)
+
+        _usernameTextBox.Text = savedUsername
+        _passwordTextBox.Text = savedPassword
+        _saveCredentialsCheckBox.Checked = Not String.IsNullOrWhiteSpace(savedUsername) OrElse Not String.IsNullOrWhiteSpace(savedPassword)
+    End Sub
+
     Private Async Sub LoginButton_Click(sender As Object, e As EventArgs)
         Await TryLoginAsync()
     End Sub
@@ -142,10 +154,10 @@ Public Class LoginForm
             Await DimensionsAuthenticator.ValidateAsync(_settings, _usernameTextBox.Text.Trim(), _passwordTextBox.Text)
 
             If _saveCredentialsCheckBox.Checked Then
-                _settings.SetSavedCredentials(_usernameTextBox.Text.Trim(), _passwordTextBox.Text)
+                _settings.SetSavedCredentialsForUrl(_settings.DimensionsUrl, _usernameTextBox.Text.Trim(), _passwordTextBox.Text)
                 AppLogger.Info("Login credentials saved using Windows user encryption.")
             Else
-                _settings.ClearSavedCredentials()
+                _settings.ClearSavedCredentialsForUrl(_settings.DimensionsUrl)
                 AppLogger.Info("Saved login credentials cleared.")
             End If
 
@@ -178,6 +190,7 @@ Public Class LoginForm
             optionsForm.ShowDialog(Me)
         End Using
         RefreshServerList()
+        LoadSavedCredentialsForSelectedServer()
     End Sub
 
     Private Sub ExitButton_Click(sender As Object, e As EventArgs)

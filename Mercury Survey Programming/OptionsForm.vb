@@ -3,6 +3,7 @@ Imports System.Collections.Generic
 Imports System.Drawing
 Imports System.IO
 Imports System.Linq
+Imports System.Text.RegularExpressions
 Imports System.Windows.Forms
 
 Public Class OptionsForm
@@ -11,13 +12,13 @@ Public Class OptionsForm
     Private ReadOnly _settings As AppSettings
     Private ReadOnly _requireValues As Boolean
     Private ReadOnly _allowRemoveUrls As Boolean
-    Private ReadOnly _dimensionsUrlComboBox As New ComboBox()
+    Private ReadOnly _dimensionsUrlListBox As New ListBox()
+    Private ReadOnly _dimensionsUrlTextBox As New TextBox()
+    Private ReadOnly _usernameTextBox As New TextBox()
+    Private ReadOnly _passwordTextBox As New TextBox()
     Private ReadOnly _saveLocationTextBox As New TextBox()
-    Private ReadOnly _authModeComboBox As New ComboBox()
-    Private ReadOnly _userFieldTextBox As New TextBox()
-    Private ReadOnly _passwordFieldTextBox As New TextBox()
-    Private ReadOnly _successContainsTextBox As New TextBox()
-    Private ReadOnly _failureContainsTextBox As New TextBox()
+    Private _currentCredentialUrl As String
+    Private _loadingSelection As Boolean
 
     Public Sub New(settings As AppSettings, requireValues As Boolean, Optional allowRemoveUrls As Boolean = False)
         _settings = settings
@@ -34,7 +35,7 @@ Public Class OptionsForm
         FormBorderStyle = FormBorderStyle.FixedDialog
         MaximizeBox = False
         MinimizeBox = False
-        ClientSize = New Size(560, 392)
+        ClientSize = New Size(620, 430)
 
         Dim titleLabel = New Label() With {
             .Text = "Options",
@@ -43,47 +44,46 @@ Public Class OptionsForm
             .Location = New Point(22, 18)
         }
 
-        AddLabel("Dimensions URL", 24, 62)
-        _dimensionsUrlComboBox.Location = New Point(162, 58)
-        _dimensionsUrlComboBox.Size = New Size(190, 24)
-        _dimensionsUrlComboBox.DropDownStyle = ComboBoxStyle.DropDown
+        AddLabel("Dimensions URLs", 24, 62)
+        _dimensionsUrlListBox.Location = New Point(162, 58)
+        _dimensionsUrlListBox.Size = New Size(420, 112)
+        AddHandler _dimensionsUrlListBox.SelectedIndexChanged, AddressOf DimensionsUrlSelectionChanged
 
-        Dim addUrlButton = New Button() With {.Text = "Add", .Location = New Point(358, 57), .Size = New Size(80, 28)}
+        AddLabel("URL", 24, 190)
+        _dimensionsUrlTextBox.Location = New Point(162, 186)
+        _dimensionsUrlTextBox.Size = New Size(330, 24)
+
+        Dim addUrlButton = New Button() With {.Text = "Add", .Location = New Point(500, 184), .Size = New Size(82, 28)}
         AddHandler addUrlButton.Click, AddressOf AddUrlButton_Click
-        Dim removeUrlButton = New Button() With {.Text = "Remove", .Location = New Point(442, 57), .Size = New Size(80, 28), .Enabled = _allowRemoveUrls, .Visible = _allowRemoveUrls}
+
+        Dim removeUrlButton = New Button() With {.Text = "Remove", .Location = New Point(500, 216), .Size = New Size(82, 28), .Enabled = _allowRemoveUrls, .Visible = _allowRemoveUrls}
         AddHandler removeUrlButton.Click, AddressOf RemoveUrlButton_Click
 
-        AddLabel("Output Root", 24, 98)
-        _saveLocationTextBox.Location = New Point(162, 94)
-        _saveLocationTextBox.Size = New Size(272, 24)
+        AddLabel("Username", 24, 232)
+        _usernameTextBox.Location = New Point(162, 228)
+        _usernameTextBox.Size = New Size(220, 24)
 
-        Dim browseButton = New Button() With {.Text = "Browse...", .Location = New Point(442, 93), .Size = New Size(80, 28)}
+        AddLabel("Password", 24, 270)
+        _passwordTextBox.Location = New Point(162, 266)
+        _passwordTextBox.Size = New Size(220, 24)
+        _passwordTextBox.UseSystemPasswordChar = True
+
+        Dim credentialHintLabel = New Label() With {
+            .Text = "Credentials are saved separately for the selected URL.",
+            .Location = New Point(162, 296),
+            .Size = New Size(420, 24),
+            .ForeColor = Color.DimGray
+        }
+
+        AddLabel("Output Root", 24, 334)
+        _saveLocationTextBox.Location = New Point(162, 330)
+        _saveLocationTextBox.Size = New Size(330, 24)
+
+        Dim browseButton = New Button() With {.Text = "Browse...", .Location = New Point(500, 328), .Size = New Size(82, 28)}
         AddHandler browseButton.Click, AddressOf BrowseButton_Click
 
-        AddLabel("Auth Mode", 24, 134)
-        _authModeComboBox.Location = New Point(162, 130)
-        _authModeComboBox.Size = New Size(160, 24)
-        _authModeComboBox.DropDownStyle = ComboBoxStyle.DropDownList
-        _authModeComboBox.Items.AddRange({"form", "basic"})
-
-        AddLabel("User Field", 24, 170)
-        _userFieldTextBox.Location = New Point(162, 166)
-        _userFieldTextBox.Size = New Size(160, 24)
-
-        AddLabel("Password Field", 24, 206)
-        _passwordFieldTextBox.Location = New Point(162, 202)
-        _passwordFieldTextBox.Size = New Size(160, 24)
-
-        AddLabel("Success Contains", 24, 242)
-        _successContainsTextBox.Location = New Point(162, 238)
-        _successContainsTextBox.Size = New Size(360, 24)
-
-        AddLabel("Failure Contains", 24, 278)
-        _failureContainsTextBox.Location = New Point(162, 274)
-        _failureContainsTextBox.Size = New Size(360, 24)
-
-        Dim saveButton = New Button() With {.Text = "Save", .Location = New Point(350, 350), .Size = New Size(82, 30)}
-        Dim cancelButton = New Button() With {.Text = "Cancel", .Location = New Point(440, 350), .Size = New Size(82, 30)}
+        Dim saveButton = New Button() With {.Text = "Save", .Location = New Point(410, 382), .Size = New Size(82, 30)}
+        Dim cancelButton = New Button() With {.Text = "Cancel", .Location = New Point(500, 382), .Size = New Size(82, 30)}
         AddHandler saveButton.Click, AddressOf SaveButton_Click
         AddHandler cancelButton.Click, Sub()
                                            DialogResult = DialogResult.Cancel
@@ -95,16 +95,15 @@ Public Class OptionsForm
 
         Controls.AddRange({
             titleLabel,
-            _dimensionsUrlComboBox,
+            _dimensionsUrlListBox,
+            _dimensionsUrlTextBox,
             addUrlButton,
             removeUrlButton,
+            _usernameTextBox,
+            _passwordTextBox,
+            credentialHintLabel,
             _saveLocationTextBox,
             browseButton,
-            _authModeComboBox,
-            _userFieldTextBox,
-            _passwordFieldTextBox,
-            _successContainsTextBox,
-            _failureContainsTextBox,
             saveButton,
             cancelButton
         })
@@ -116,42 +115,50 @@ Public Class OptionsForm
 
     Private Sub LoadSettingsIntoControls()
         _settings.ApplyDefaults()
-        _dimensionsUrlComboBox.Items.Clear()
+        _dimensionsUrlListBox.Items.Clear()
+
         For Each url As String In _settings.DimensionsUrls
-            _dimensionsUrlComboBox.Items.Add(url)
+            _dimensionsUrlListBox.Items.Add(url)
         Next
-        _dimensionsUrlComboBox.Text = _settings.DimensionsUrl
+
         _saveLocationTextBox.Text = _settings.SaveLocation
-        _authModeComboBox.SelectedItem = _settings.AuthMode
-        If _authModeComboBox.SelectedIndex < 0 Then
-            _authModeComboBox.SelectedItem = "form"
+        SelectUrl(_settings.DimensionsUrl)
+
+        If _dimensionsUrlListBox.SelectedIndex < 0 AndAlso _dimensionsUrlListBox.Items.Count > 0 Then
+            _dimensionsUrlListBox.SelectedIndex = 0
+        End If
+    End Sub
+
+    Private Sub DimensionsUrlSelectionChanged(sender As Object, e As EventArgs)
+        If _loadingSelection Then
+            Return
         End If
 
-        _userFieldTextBox.Text = _settings.UserField
-        _passwordFieldTextBox.Text = _settings.PasswordField
-        _successContainsTextBox.Text = _settings.SuccessContains
-        _failureContainsTextBox.Text = _settings.FailureContains
+        SaveCurrentCredentialFields()
+        Dim selectedUrl = TryCast(_dimensionsUrlListBox.SelectedItem, String)
+        LoadCredentialFields(selectedUrl)
     End Sub
 
     Private Sub AddUrlButton_Click(sender As Object, e As EventArgs)
-        Dim url = _dimensionsUrlComboBox.Text.Trim()
+        Dim url = NormalizeOptionUrl(_dimensionsUrlTextBox.Text)
         If String.IsNullOrWhiteSpace(url) Then
             MessageBox.Show(Me, "Enter a Dimensions URL to add.", "Options Required", MessageBoxButtons.OK, MessageBoxIcon.Warning)
-            _dimensionsUrlComboBox.Focus()
+            _dimensionsUrlTextBox.Focus()
             Return
         End If
 
         If Not IsValidHttpUrl(url) Then
             MessageBox.Show(Me, "Enter a valid Dimensions HTTP or HTTPS URL.", "Options Required", MessageBoxButtons.OK, MessageBoxIcon.Warning)
-            _dimensionsUrlComboBox.Focus()
+            _dimensionsUrlTextBox.Focus()
             Return
         End If
 
-        If Not _dimensionsUrlComboBox.Items.Contains(url) Then
-            _dimensionsUrlComboBox.Items.Add(url)
+        SaveCurrentCredentialFields()
+        If Not ContainsUrl(url) Then
+            _dimensionsUrlListBox.Items.Add(url)
         End If
 
-        _dimensionsUrlComboBox.SelectedItem = url
+        SelectUrl(url)
     End Sub
 
     Private Sub RemoveUrlButton_Click(sender As Object, e As EventArgs)
@@ -159,14 +166,13 @@ Public Class OptionsForm
             Return
         End If
 
-        Dim url = _dimensionsUrlComboBox.Text.Trim()
+        Dim url = TryCast(_dimensionsUrlListBox.SelectedItem, String)
         If String.IsNullOrWhiteSpace(url) Then
             MessageBox.Show(Me, "Select a Dimensions URL to remove.", "Remove URL", MessageBoxButtons.OK, MessageBoxIcon.Warning)
-            _dimensionsUrlComboBox.Focus()
             Return
         End If
 
-        If _dimensionsUrlComboBox.Items.Count <= 1 Then
+        If _dimensionsUrlListBox.Items.Count <= 1 Then
             MessageBox.Show(Me, "At least one Dimensions URL must remain.", "Remove URL", MessageBoxButtons.OK, MessageBoxIcon.Warning)
             Return
         End If
@@ -175,14 +181,15 @@ Public Class OptionsForm
             Return
         End If
 
-        For index As Integer = _dimensionsUrlComboBox.Items.Count - 1 To 0 Step -1
-            If String.Equals(CStr(_dimensionsUrlComboBox.Items(index)).Trim(), url, StringComparison.OrdinalIgnoreCase) Then
-                _dimensionsUrlComboBox.Items.RemoveAt(index)
-            End If
-        Next
+        _settings.ClearSavedCredentialsForUrl(url)
+        _dimensionsUrlListBox.Items.Remove(url)
+        _currentCredentialUrl = Nothing
+        _dimensionsUrlTextBox.Clear()
+        _usernameTextBox.Clear()
+        _passwordTextBox.Clear()
 
-        If _dimensionsUrlComboBox.Items.Count > 0 Then
-            _dimensionsUrlComboBox.SelectedIndex = 0
+        If _dimensionsUrlListBox.Items.Count > 0 Then
+            _dimensionsUrlListBox.SelectedIndex = 0
         End If
     End Sub
 
@@ -197,18 +204,17 @@ Public Class OptionsForm
     End Sub
 
     Private Sub SaveButton_Click(sender As Object, e As EventArgs)
+        SaveCurrentCredentialFields()
+
         If Not ValidateOptions() Then
             Return
         End If
 
-        Dim selectedUrl = _dimensionsUrlComboBox.Text.Trim()
-        Dim remainingUrls = New List(Of String)()
-        For Each item As Object In _dimensionsUrlComboBox.Items
-            Dim url = CStr(item).Trim()
-            If Not String.IsNullOrWhiteSpace(url) AndAlso Not remainingUrls.Contains(url) Then
-                remainingUrls.Add(url)
-            End If
-        Next
+        Dim remainingUrls = GetUrlList()
+        Dim selectedUrl = TryCast(_dimensionsUrlListBox.SelectedItem, String)
+        If String.IsNullOrWhiteSpace(selectedUrl) AndAlso remainingUrls.Count > 0 Then
+            selectedUrl = remainingUrls(0)
+        End If
 
         If _allowRemoveUrls Then
             For Each existingUrl As String In _settings.DimensionsUrls.ToList()
@@ -220,17 +226,21 @@ Public Class OptionsForm
 
         _settings.DimensionsUrls.Clear()
         For Each url As String In remainingUrls
-            If Not String.IsNullOrWhiteSpace(url) AndAlso Not _settings.DimensionsUrls.Contains(url) Then
+            If Not _settings.DimensionsUrls.Contains(url) Then
                 _settings.DimensionsUrls.Add(url)
             End If
         Next
-        _settings.AddDimensionsUrl(selectedUrl)
+
+        If Not String.IsNullOrWhiteSpace(selectedUrl) Then
+            _settings.SelectDimensionsUrl(selectedUrl)
+        End If
+
         _settings.SaveLocation = _saveLocationTextBox.Text.Trim()
-        _settings.AuthMode = CStr(_authModeComboBox.SelectedItem)
-        _settings.UserField = _userFieldTextBox.Text.Trim()
-        _settings.PasswordField = _passwordFieldTextBox.Text.Trim()
-        _settings.SuccessContains = _successContainsTextBox.Text
-        _settings.FailureContains = _failureContainsTextBox.Text
+        _settings.AuthMode = "form"
+        _settings.UserField = "username"
+        _settings.PasswordField = "password"
+        _settings.SuccessContains = String.Empty
+        _settings.FailureContains = String.Empty
         _settings.ApplyDefaults()
 
         Try
@@ -252,13 +262,20 @@ Public Class OptionsForm
     End Sub
 
     Private Function ValidateOptions() As Boolean
-        If _requireValues OrElse Not String.IsNullOrWhiteSpace(_dimensionsUrlComboBox.Text) Then
-            If Not IsValidHttpUrl(_dimensionsUrlComboBox.Text.Trim()) Then
+        Dim urls = GetUrlList()
+
+        If _requireValues AndAlso urls.Count = 0 Then
+            MessageBox.Show(Me, "Add at least one Dimensions URL.", "Options Required", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            _dimensionsUrlTextBox.Focus()
+            Return False
+        End If
+
+        For Each url As String In urls
+            If Not IsValidHttpUrl(url) Then
                 MessageBox.Show(Me, "Enter a valid Dimensions HTTP or HTTPS URL.", "Options Required", MessageBoxButtons.OK, MessageBoxIcon.Warning)
-                _dimensionsUrlComboBox.Focus()
                 Return False
             End If
-        End If
+        Next
 
         If _requireValues OrElse Not String.IsNullOrWhiteSpace(_saveLocationTextBox.Text) Then
             If String.IsNullOrWhiteSpace(_saveLocationTextBox.Text) Then
@@ -274,17 +291,83 @@ Public Class OptionsForm
             End If
         End If
 
-        If CStr(_authModeComboBox.SelectedItem) = "form" Then
-            If String.IsNullOrWhiteSpace(_userFieldTextBox.Text) OrElse String.IsNullOrWhiteSpace(_passwordFieldTextBox.Text) Then
-                MessageBox.Show(Me, "Enter form field names for username and password.", "Options Required", MessageBoxButtons.OK, MessageBoxIcon.Warning)
-                Return False
-            End If
-        End If
-
         Return True
     End Function
 
-    Private Function IsValidHttpUrl(value As String) As Boolean
+    Private Sub SelectUrl(url As String)
+        _loadingSelection = True
+        Try
+            For index As Integer = 0 To _dimensionsUrlListBox.Items.Count - 1
+                If String.Equals(CStr(_dimensionsUrlListBox.Items(index)), url, StringComparison.OrdinalIgnoreCase) Then
+                    _dimensionsUrlListBox.SelectedIndex = index
+                    LoadCredentialFields(url)
+                    Return
+                End If
+            Next
+        Finally
+            _loadingSelection = False
+        End Try
+    End Sub
+
+    Private Sub LoadCredentialFields(url As String)
+        _currentCredentialUrl = url
+        _dimensionsUrlTextBox.Text = If(url, String.Empty)
+        _usernameTextBox.Text = If(String.IsNullOrWhiteSpace(url), String.Empty, _settings.GetSavedUsernameForUrl(url))
+        _passwordTextBox.Text = If(String.IsNullOrWhiteSpace(url), String.Empty, _settings.GetSavedPasswordForUrl(url))
+    End Sub
+
+    Private Sub SaveCurrentCredentialFields()
+        If String.IsNullOrWhiteSpace(_currentCredentialUrl) Then
+            Return
+        End If
+
+        If String.IsNullOrWhiteSpace(_usernameTextBox.Text) AndAlso String.IsNullOrWhiteSpace(_passwordTextBox.Text) Then
+            _settings.ClearSavedCredentialsForUrl(_currentCredentialUrl)
+            Return
+        End If
+
+        _settings.SetSavedCredentialsForUrl(_currentCredentialUrl, _usernameTextBox.Text.Trim(), _passwordTextBox.Text)
+    End Sub
+
+    Private Function GetUrlList() As List(Of String)
+        Dim urls = New List(Of String)()
+        For Each item As Object In _dimensionsUrlListBox.Items
+            Dim url = NormalizeOptionUrl(CStr(item))
+            If Not String.IsNullOrWhiteSpace(url) AndAlso Not urls.Contains(url) Then
+                urls.Add(url)
+            End If
+        Next
+
+        Return urls
+    End Function
+
+    Private Function ContainsUrl(url As String) As Boolean
+        Return GetUrlList().Any(Function(existingUrl) String.Equals(existingUrl, url, StringComparison.OrdinalIgnoreCase))
+    End Function
+
+    Private Shared Function NormalizeOptionUrl(value As String) As String
+        Dim cleaned = If(value, String.Empty).Trim()
+        If String.IsNullOrWhiteSpace(cleaned) Then
+            Return String.Empty
+        End If
+
+        If Not cleaned.StartsWith("http://", StringComparison.OrdinalIgnoreCase) AndAlso
+            Not cleaned.StartsWith("https://", StringComparison.OrdinalIgnoreCase) Then
+            cleaned = "http://" & cleaned.Trim("/"c, " "c)
+        End If
+
+        Dim uri As Uri = Nothing
+        If Uri.TryCreate(cleaned, UriKind.Absolute, uri) Then
+            If Regex.IsMatch(uri.Host, "^dimensions\d+\.mercuryanalytics\.com$", RegexOptions.IgnoreCase) AndAlso
+                (String.IsNullOrWhiteSpace(uri.AbsolutePath) OrElse String.Equals(uri.AbsolutePath, "/", StringComparison.Ordinal)) Then
+                Return "http://" & uri.Host.ToLowerInvariant() & "/SPSSMR/DimensionNet/"
+            End If
+        End If
+
+        Return cleaned
+    End Function
+
+    Private Shared Function IsValidHttpUrl(value As String) As Boolean
         Dim uri As Uri = Nothing
         Return Uri.TryCreate(value, UriKind.Absolute, uri) AndAlso
             (uri.Scheme = Uri.UriSchemeHttp OrElse uri.Scheme = Uri.UriSchemeHttps)
