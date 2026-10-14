@@ -228,9 +228,9 @@ Public Class MainForm
         _manageSuperUsersLinkLabel.Size = New Size(160, 24)
         AddHandler _manageSuperUsersLinkLabel.LinkClicked, AddressOf ManageSuperUsersLinkLabel_LinkClicked
 
-        _githubTokensButton.Text = "GitHub Tokens..."
+        _githubTokensButton.Text = "Manage Templates..."
         _githubTokensButton.Location = New Point(202, 58)
-        _githubTokensButton.Size = New Size(130, 30)
+        _githubTokensButton.Size = New Size(146, 30)
         AddHandler _githubTokensButton.Click, AddressOf GithubTokensButton_Click
 
         AddSuperLabel("Template", 24, 106)
@@ -286,8 +286,8 @@ Public Class MainForm
     End Sub
 
     Private Sub GithubTokensButton_Click(sender As Object, e As EventArgs)
-        Using tokenForm = New GithubTokenForm(_settings)
-            tokenForm.ShowDialog(Me)
+        Using templateForm = New TemplateManagerForm(_settings)
+            templateForm.ShowDialog(Me)
         End Using
 
         RefreshSettingsDisplay()

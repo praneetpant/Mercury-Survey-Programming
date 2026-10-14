@@ -15,8 +15,8 @@
     <MyType>WindowsForms</MyType>
     <OptionInfer>On</OptionInfer>
     <ApplicationIcon>Assets\MercuryLogo.ico</ApplicationIcon>
-    <AssemblyVersion>1.0.5.0</AssemblyVersion>
-    <FileVersion>1.0.5.0</FileVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -65,6 +65,7 @@
     <Compile Include="OptionsForm.vb" />
     <Compile Include="Program.vb" />
     <Compile Include="SetupForm.vb" />
+    <Compile Include="TemplateManagerForm.vb" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\MercuryLogo.ico" />

@@ -275,6 +275,25 @@ Public Class AppSettings
         Return mapping.GetGithubToken(templateKey)
     End Function
 
+    Public Function GetTemplateInfoForDimensionsUrl(dimensionsUrl As String, templateKey As String) As RepositoryTemplateInfo
+        Dim mapping = GetRepositoryMappingForDimensionsUrl(dimensionsUrl)
+        If mapping Is Nothing Then
+            Return Nothing
+        End If
+
+        Dim templateInfo = mapping.GetTemplateInfo(templateKey)
+        If templateInfo Is Nothing Then
+            Return Nothing
+        End If
+
+        Return New RepositoryTemplateInfo With {
+            .RepositoryUrl = templateInfo.RepositoryUrl,
+            .OldMddName = templateInfo.OldMddName,
+            .Branch = templateInfo.Branch,
+            .GithubToken = templateInfo.GithubToken
+        }
+    End Function
+
     Public Sub SetGithubTokenForDimensionsUrl(dimensionsUrl As String, templateKey As String, githubToken As String)
         Dim mapping = GetRepositoryMappingForDimensionsUrl(dimensionsUrl)
         If mapping Is Nothing Then
@@ -287,6 +306,64 @@ Public Class AppSettings
         End If
 
         mapping.SetTemplateInfo(templateKey, templateInfo.RepositoryUrl, templateInfo.OldMddName, templateInfo.Branch, githubToken)
+    End Sub
+
+    Public Sub SetTemplateForDimensionsUrl(dimensionsUrl As String, templateKey As String, repositoryUrl As String, oldMddName As String, branch As String, githubToken As String, keepExistingTokenWhenBlank As Boolean)
+        Dim normalizedUrl = NormalizeDimensionsLoginUrl(dimensionsUrl)
+        Dim cleanedTemplateKey = NormalizeTemplateKey(templateKey)
+        Dim cleanedRepositoryUrl = If(repositoryUrl, String.Empty).Trim()
+        Dim cleanedGithubToken = If(githubToken, String.Empty).Trim()
+
+        If String.IsNullOrWhiteSpace(normalizedUrl) Then
+            Throw New AppUserMessageException("Select a Dimensions URL.")
+        End If
+
+        If String.IsNullOrWhiteSpace(cleanedTemplateKey) Then
+            Throw New AppUserMessageException("Enter a template name.")
+        End If
+
+        If String.IsNullOrWhiteSpace(cleanedRepositoryUrl) Then
+            Throw New AppUserMessageException("Enter the GitHub repository URL.")
+        End If
+
+        ApplyDefaults()
+        AddDimensionsUrl(normalizedUrl)
+
+        Dim mappingKey = NormalizeRepositoryMappingKey(normalizedUrl)
+        If RepositoryMappings Is Nothing Then
+            RepositoryMappings = New Dictionary(Of String, RepositoryTemplateMapping)(StringComparer.OrdinalIgnoreCase)
+        End If
+
+        If Not RepositoryMappings.ContainsKey(mappingKey) Then
+            RepositoryMappings(mappingKey) = New RepositoryTemplateMapping()
+        End If
+
+        Dim mapping = RepositoryMappings(mappingKey)
+        If keepExistingTokenWhenBlank AndAlso String.IsNullOrWhiteSpace(cleanedGithubToken) Then
+            cleanedGithubToken = mapping.GetGithubToken(cleanedTemplateKey)
+        End If
+
+        mapping.SetTemplateInfo(cleanedTemplateKey, cleanedRepositoryUrl, If(oldMddName, String.Empty), If(branch, String.Empty), cleanedGithubToken)
+    End Sub
+
+    Public Sub RemoveTemplateForDimensionsUrl(dimensionsUrl As String, templateKey As String)
+        Dim mapping = GetRepositoryMappingForDimensionsUrl(dimensionsUrl)
+        If mapping Is Nothing Then
+            Throw New AppUserMessageException("No repository mapping exists for this Dimensions URL.")
+        End If
+
+        Dim cleanedTemplateKey = NormalizeTemplateKey(templateKey)
+        If String.IsNullOrWhiteSpace(cleanedTemplateKey) Then
+            Throw New AppUserMessageException("Select a template to delete.")
+        End If
+
+        mapping.RemoveTemplate(cleanedTemplateKey)
+        If mapping.GetTemplateKeys().Count = 0 Then
+            Dim mappingKey = NormalizeRepositoryMappingKey(NormalizeDimensionsLoginUrl(dimensionsUrl))
+            If RepositoryMappings IsNot Nothing AndAlso RepositoryMappings.ContainsKey(mappingKey) Then
+                RepositoryMappings.Remove(mappingKey)
+            End If
+        End If
     End Sub
 
     Public Sub SetSharedConfigurationGithubToken(githubToken As String)
@@ -798,6 +875,13 @@ Public Class AppSettings
         normalized = Regex.Replace(normalized, "^https?://", String.Empty)
         normalized = normalized.Trim("/"c, " "c)
         Return normalized
+    End Function
+
+    Private Shared Function NormalizeTemplateKey(value As String) As String
+        Dim cleaned = If(value, String.Empty).Trim().ToLowerInvariant()
+        cleaned = Regex.Replace(cleaned, "[^a-z0-9_-]+", "_")
+        cleaned = Regex.Replace(cleaned, "_+", "_").Trim("_"c, "-"c)
+        Return cleaned
     End Function
 
     Private Shared Function CreateDimensionsUrlFromMappingKey(value As String) As String
@@ -1334,6 +1418,17 @@ Public Class RepositoryTemplateMapping
 
         Return Nothing
     End Function
+
+    Public Sub RemoveTemplate(templateKey As String)
+        Dim cleanedKey = If(templateKey, String.Empty).Trim().ToLowerInvariant()
+        If Templates Is Nothing OrElse String.IsNullOrWhiteSpace(cleanedKey) Then
+            Return
+        End If
+
+        If Templates.ContainsKey(cleanedKey) Then
+            Templates.Remove(cleanedKey)
+        End If
+    End Sub
 
     Public Function GetTemplateKeys() As List(Of String)
         If Templates Is Nothing Then
