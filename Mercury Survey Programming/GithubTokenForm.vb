@@ -131,6 +131,14 @@ Public Class GithubTokenForm
                 Return
             End If
 
+            Dim existingToken = _settings.GetGithubTokenForDimensionsUrl(selectedUrl, selectedTemplate.TemplateKey)
+            If String.Equals(existingToken, token, StringComparison.Ordinal) Then
+                _tokenTextBox.Clear()
+                DialogResult = DialogResult.OK
+                Close()
+                Return
+            End If
+
             _settings.SetGithubTokenForDimensionsUrl(selectedUrl, selectedTemplate.TemplateKey, token)
             _settings.Save()
             Try

@@ -476,6 +476,11 @@ Public Class AppSettings
             "Update shared repository configuration")
     End Function
 
+    Public Function GetRepositoryMappingsSyncText() As String
+        ApplyDefaults()
+        Return SerializeRepositoryMappingsJson()
+    End Function
+
     Public Async Function UploadSuperUsersToGithubAsync(templateKey As String) As Task
         Dim githubToken = GetSharedConfigurationWriteToken(templateKey)
         If String.IsNullOrWhiteSpace(githubToken) Then

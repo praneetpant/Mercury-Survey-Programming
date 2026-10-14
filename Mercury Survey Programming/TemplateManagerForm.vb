@@ -232,6 +232,16 @@ Public Class TemplateManagerForm
         End If
 
         Try
+            Dim existingInfo = _settings.GetTemplateInfoForDimensionsUrl(_dimensionsUrlComboBox.Text, templateKey)
+            If existingInfo IsNot Nothing AndAlso
+                String.Equals(existingInfo.RepositoryUrl, _repositoryUrlTextBox.Text.Trim(), StringComparison.OrdinalIgnoreCase) AndAlso
+                String.Equals(If(existingInfo.OldMddName, String.Empty), _oldMddNameTextBox.Text.Trim(), StringComparison.Ordinal) AndAlso
+                String.Equals(If(existingInfo.Branch, String.Empty), _branchTextBox.Text.Trim(), StringComparison.OrdinalIgnoreCase) AndAlso
+                (String.IsNullOrWhiteSpace(token) OrElse String.Equals(existingInfo.GithubToken, token, StringComparison.Ordinal)) Then
+                SetStatus("No template changes to sync.", False)
+                Return
+            End If
+
             _settings.SetTemplateForDimensionsUrl(
                 _dimensionsUrlComboBox.Text,
                 templateKey,

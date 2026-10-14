@@ -1,5 +1,6 @@
 Imports System
 Imports System.Drawing
+Imports System.Linq
 Imports System.Threading.Tasks
 Imports System.Windows.Forms
 
@@ -101,6 +102,13 @@ Public Class ManageSuperUsersForm
 
     Private Sub AddButton_Click(sender As Object, e As EventArgs)
         Try
+            Dim cleanedUser = If(_superUserNameTextBox.Text, String.Empty).Trim().ToLowerInvariant()
+            If _settings.SuperUsers.Any(Function(existingUser) String.Equals(existingUser, cleanedUser, StringComparison.OrdinalIgnoreCase)) Then
+                _superUserNameTextBox.Clear()
+                SetStatus("Superuser already exists. No changes to sync.", False)
+                Return
+            End If
+
             _settings.AddSuperUser(_superUserNameTextBox.Text)
             _settings.Save()
             _hasChanges = True

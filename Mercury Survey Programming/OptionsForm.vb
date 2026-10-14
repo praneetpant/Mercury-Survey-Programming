@@ -19,6 +19,7 @@ Public Class OptionsForm
     Private ReadOnly _saveLocationTextBox As New TextBox()
     Private _currentCredentialUrl As String
     Private _loadingSelection As Boolean
+    Private _initialRepositoryMappingsSyncText As String
 
     Public Sub New(settings As AppSettings, requireValues As Boolean, Optional allowRemoveUrls As Boolean = False)
         _settings = settings
@@ -127,6 +128,8 @@ Public Class OptionsForm
         If _dimensionsUrlListBox.SelectedIndex < 0 AndAlso _dimensionsUrlListBox.Items.Count > 0 Then
             _dimensionsUrlListBox.SelectedIndex = 0
         End If
+
+        _initialRepositoryMappingsSyncText = _settings.GetRepositoryMappingsSyncText()
     End Sub
 
     Private Sub DimensionsUrlSelectionChanged(sender As Object, e As EventArgs)
@@ -252,7 +255,10 @@ Public Class OptionsForm
             _settings.Save()
             If _allowRemoveUrls Then
                 Try
-                    Await _settings.UploadRepositoryMappingsToGithubAsync("classic")
+                    Dim currentRepositoryMappingsSyncText = _settings.GetRepositoryMappingsSyncText()
+                    If Not String.Equals(_initialRepositoryMappingsSyncText, currentRepositoryMappingsSyncText, StringComparison.Ordinal) Then
+                        Await _settings.UploadRepositoryMappingsToGithubAsync("classic")
+                    End If
                 Catch syncEx As Exception
                     MessageBox.Show(Me, "Options were saved on this PC, but could not sync to shared configuration:" & Environment.NewLine & syncEx.Message, "Shared Sync Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning)
                 End Try
