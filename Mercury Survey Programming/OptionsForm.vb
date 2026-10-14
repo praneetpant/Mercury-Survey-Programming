@@ -203,7 +203,7 @@ Public Class OptionsForm
         End Using
     End Sub
 
-    Private Sub SaveButton_Click(sender As Object, e As EventArgs)
+    Private Async Sub SaveButton_Click(sender As Object, e As EventArgs)
         SaveCurrentCredentialFields()
 
         If Not ValidateOptions() Then
@@ -243,13 +243,16 @@ Public Class OptionsForm
         _settings.FailureContains = String.Empty
         _settings.ApplyDefaults()
 
+        ToggleInputs(False)
+        Cursor = Cursors.WaitCursor
+
         Try
             Directory.CreateDirectory(_settings.SaveLocation)
             Directory.CreateDirectory(_settings.GetProjectSaveLocation())
             _settings.Save()
             If _allowRemoveUrls Then
                 Try
-                    _settings.UploadRepositoryMappingsToGithubAsync("classic").GetAwaiter().GetResult()
+                    Await _settings.UploadRepositoryMappingsToGithubAsync("classic")
                 Catch syncEx As Exception
                     MessageBox.Show(Me, "Options were saved on this PC, but could not sync to shared configuration:" & Environment.NewLine & syncEx.Message, "Shared Sync Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning)
                 End Try
@@ -258,6 +261,11 @@ Public Class OptionsForm
             Close()
         Catch ex As Exception
             MessageBox.Show(Me, ex.Message, "Options Error", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        Finally
+            Cursor = Cursors.Default
+            If Not IsDisposed Then
+                ToggleInputs(True)
+            End If
         End Try
     End Sub
 
@@ -344,6 +352,12 @@ Public Class OptionsForm
     Private Function ContainsUrl(url As String) As Boolean
         Return GetUrlList().Any(Function(existingUrl) String.Equals(existingUrl, url, StringComparison.OrdinalIgnoreCase))
     End Function
+
+    Private Sub ToggleInputs(enabled As Boolean)
+        For Each control As Control In Controls
+            control.Enabled = enabled
+        Next
+    End Sub
 
     Private Shared Function NormalizeOptionUrl(value As String) As String
         Dim cleaned = If(value, String.Empty).Trim()
