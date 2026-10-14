@@ -235,7 +235,7 @@ Public NotInheritable Class AppUpdater
         Else
             progress?.Invoke("Starting installer...", -1)
             AppLogger.Info("Launching installer updater: " & updatePath)
-            Process.Start(New ProcessStartInfo(updatePath) With {.UseShellExecute = True})
+            LaunchInstallerAfterExit(updatePath)
         End If
     End Function
 
@@ -323,8 +323,8 @@ Public NotInheritable Class AppUpdater
         Dim backupPath = currentExePath & ".old" & DateTime.Now.ToString("yyyyMMddHHmmss")
         Dim processId = Process.GetCurrentProcess().Id
 
-        Dim script = "$ErrorActionPreference = 'Stop'" & Environment.NewLine &
-            "param([string]$Source, [string]$Target, [string]$Backup, [int]$ProcessId)" & Environment.NewLine &
+        Dim script = "param([string]$Source, [string]$Target, [string]$Backup, [int]$ProcessId)" & Environment.NewLine &
+            "$ErrorActionPreference = 'Stop'" & Environment.NewLine &
             "try { Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction SilentlyContinue } catch { }" & Environment.NewLine &
             "for ($attempt = 0; $attempt -lt 30; $attempt++) {" & Environment.NewLine &
             "    try {" & Environment.NewLine &
@@ -360,8 +360,8 @@ Public NotInheritable Class AppUpdater
         Dim scriptPath = Path.Combine(updateDirectory, "run-installer-after-exit.ps1")
         Dim processId = Process.GetCurrentProcess().Id
 
-        Dim script = "$ErrorActionPreference = 'Stop'" & Environment.NewLine &
-            "param([string]$Installer, [int]$ProcessId)" & Environment.NewLine &
+        Dim script = "param([string]$Installer, [int]$ProcessId)" & Environment.NewLine &
+            "$ErrorActionPreference = 'Stop'" & Environment.NewLine &
             "try { Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction SilentlyContinue } catch { }" & Environment.NewLine &
             "Start-Process -FilePath $Installer" & Environment.NewLine
 
@@ -446,7 +446,7 @@ Public NotInheritable Class AppUpdater
             _progressBar.Style = ProgressBarStyle.Marquee
             _progressBar.MarqueeAnimationSpeed = 35
 
-            _detailLabel.Text = "The app will close after the installer starts."
+            _detailLabel.Text = "The app will close and restart after the update is applied."
             _detailLabel.Location = New Point(20, 114)
             _detailLabel.Size = New Size(420, 22)
             _detailLabel.ForeColor = Color.DimGray
