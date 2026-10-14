@@ -190,12 +190,12 @@ Public Class TemplateManagerForm
 
         Dim templateInfo = _settings.GetTemplateInfoForDimensionsUrl(_dimensionsUrlComboBox.Text, item.TemplateKey)
         _templateKeyTextBox.Text = item.TemplateKey
-        _templateKeyTextBox.ReadOnly = True
+        _templateKeyTextBox.ReadOnly = False
         _repositoryUrlTextBox.Text = If(templateInfo Is Nothing, String.Empty, templateInfo.RepositoryUrl)
         _branchTextBox.Text = If(templateInfo Is Nothing, String.Empty, templateInfo.Branch)
         _oldMddNameTextBox.Text = If(templateInfo Is Nothing, String.Empty, templateInfo.OldMddName)
         _tokenTextBox.Clear()
-        SetStatus("Edit details, or paste a new token to replace the existing token.", False)
+        SetStatus("Edit details or rename the template. Blank token keeps the existing token.", False)
     End Sub
 
     Private Sub NewButton_Click(sender As Object, e As EventArgs)
@@ -210,8 +210,10 @@ Public Class TemplateManagerForm
     Private Sub SaveButton_Click(sender As Object, e As EventArgs)
         Dim selectedItem = TryCast(_templatesListBox.SelectedItem, TemplateListItem)
         Dim isNewTemplate = selectedItem Is Nothing
-        Dim templateKey = _templateKeyTextBox.Text.Trim()
+        Dim oldTemplateKey = If(isNewTemplate, String.Empty, selectedItem.TemplateKey)
+        Dim templateKey = AppSettings.NormalizeTemplateKey(_templateKeyTextBox.Text)
         Dim token = _tokenTextBox.Text.Trim()
+        Dim isRename = Not isNewTemplate AndAlso Not String.Equals(oldTemplateKey, templateKey, StringComparison.OrdinalIgnoreCase)
 
         If String.IsNullOrWhiteSpace(templateKey) Then
             MessageBox.Show(Me, "Enter a template name.", "Template Required", MessageBoxButtons.OK, MessageBoxIcon.Warning)
@@ -232,14 +234,28 @@ Public Class TemplateManagerForm
         End If
 
         Try
-            Dim existingInfo = _settings.GetTemplateInfoForDimensionsUrl(_dimensionsUrlComboBox.Text, templateKey)
-            If existingInfo IsNot Nothing AndAlso
-                String.Equals(existingInfo.RepositoryUrl, _repositoryUrlTextBox.Text.Trim(), StringComparison.OrdinalIgnoreCase) AndAlso
-                String.Equals(If(existingInfo.OldMddName, String.Empty), _oldMddNameTextBox.Text.Trim(), StringComparison.Ordinal) AndAlso
-                String.Equals(If(existingInfo.Branch, String.Empty), _branchTextBox.Text.Trim(), StringComparison.OrdinalIgnoreCase) AndAlso
-                (String.IsNullOrWhiteSpace(token) OrElse String.Equals(existingInfo.GithubToken, token, StringComparison.Ordinal)) Then
+            Dim oldInfo = If(isNewTemplate, Nothing, _settings.GetTemplateInfoForDimensionsUrl(_dimensionsUrlComboBox.Text, oldTemplateKey))
+            Dim targetInfo = _settings.GetTemplateInfoForDimensionsUrl(_dimensionsUrlComboBox.Text, templateKey)
+
+            If (isNewTemplate OrElse isRename) AndAlso targetInfo IsNot Nothing Then
+                MessageBox.Show(Me, "A template with this name already exists.", "Template Exists", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                _templateKeyTextBox.Focus()
+                Return
+            End If
+
+            Dim compareInfo = If(isRename, oldInfo, targetInfo)
+            If Not isRename AndAlso compareInfo IsNot Nothing AndAlso
+                String.Equals(compareInfo.RepositoryUrl, _repositoryUrlTextBox.Text.Trim(), StringComparison.OrdinalIgnoreCase) AndAlso
+                String.Equals(If(compareInfo.OldMddName, String.Empty), _oldMddNameTextBox.Text.Trim(), StringComparison.Ordinal) AndAlso
+                String.Equals(If(compareInfo.Branch, String.Empty), _branchTextBox.Text.Trim(), StringComparison.OrdinalIgnoreCase) AndAlso
+                (String.IsNullOrWhiteSpace(token) OrElse String.Equals(compareInfo.GithubToken, token, StringComparison.Ordinal)) Then
                 SetStatus("No template changes to sync.", False)
                 Return
+            End If
+
+            Dim effectiveToken = token
+            If String.IsNullOrWhiteSpace(effectiveToken) AndAlso oldInfo IsNot Nothing Then
+                effectiveToken = oldInfo.GithubToken
             End If
 
             _settings.SetTemplateForDimensionsUrl(
@@ -248,10 +264,16 @@ Public Class TemplateManagerForm
                 _repositoryUrlTextBox.Text,
                 _oldMddNameTextBox.Text,
                 _branchTextBox.Text,
-                token,
+                effectiveToken,
                 keepExistingTokenWhenBlank:=Not isNewTemplate)
+
+            If isRename Then
+                _settings.RemoveTemplateForDimensionsUrl(_dimensionsUrlComboBox.Text, oldTemplateKey)
+            End If
+
             _settings.Save()
             _hasChanges = True
+            _templateKeyTextBox.Text = templateKey
             _tokenTextBox.Clear()
             RefreshTemplateList(templateKey)
             SetStatus("Template saved. Changes will sync to GitHub on close.", False)

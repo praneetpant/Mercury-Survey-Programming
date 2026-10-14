@@ -1064,7 +1064,7 @@ Public Class AppSettings
         Return NormalizeRepositoryMappingKey(cleaned)
     End Function
 
-    Private Shared Function NormalizeTemplateKey(value As String) As String
+    Public Shared Function NormalizeTemplateKey(value As String) As String
         Dim cleaned = If(value, String.Empty).Trim().ToLowerInvariant()
         cleaned = Regex.Replace(cleaned, "[^a-z0-9_-]+", "_")
         cleaned = Regex.Replace(cleaned, "_+", "_").Trim("_"c, "-"c)
