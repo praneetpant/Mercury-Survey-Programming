@@ -51,7 +51,7 @@ Public Class GithubRepositoryUploader
         Await PutFileAsync(repo, branch, relativePath, fileBytes, remoteFile.Sha, commitMessage, githubToken)
     End Function
 
-    Public Shared Async Function UploadDirectoryAsync(repoUrl As String, branch As String, githubToken As String, sourceDirectory As String, commitMessage As String, progress As Action(Of UploadProgress)) As Task(Of UploadSummary)
+    Public Shared Async Function UploadDirectoryAsync(repoUrl As String, branch As String, githubToken As String, sourceDirectory As String, commitMessage As String, progress As Action(Of UploadProgress), Optional allowRepositoryStructureReplace As Boolean = False) As Task(Of UploadSummary)
         If String.IsNullOrWhiteSpace(githubToken) Then
             Throw New ArgumentException("A GitHub token is required for upload.")
         End If
@@ -76,6 +76,9 @@ Public Class GithubRepositoryUploader
         If remoteEntries.Count = 0 Then
             progress?.Invoke(New UploadProgress With {.Message = "Repository is empty. Starting initial upload...", .Current = 0, .Total = 0})
             AppLogger.Info("Super User upload detected empty GitHub repository. Initial upload will create repository contents.")
+        ElseIf allowRepositoryStructureReplace Then
+            progress?.Invoke(New UploadProgress With {.Message = "Repository structure replace confirmed. Mirroring selected folder...", .Current = 0, .Total = 0})
+            AppLogger.Info("Super User upload is replacing the existing GitHub repository structure.")
         Else
             ValidateSourceDirectoryMatchesRepository(remoteEntries, sourceDirectory)
         End If
@@ -174,12 +177,31 @@ Public Class GithubRepositoryUploader
                 shownPaths &= Environment.NewLine & "...and " & (missingPaths.Count - 10).ToString() & " more"
             End If
 
-            Throw New AppUserMessageException(
-                "The selected folder does not match the selected GitHub template repository." & Environment.NewLine & Environment.NewLine &
-                "Missing required top-level folder/file from selected folder:" & Environment.NewLine & shownPaths & Environment.NewLine & Environment.NewLine &
-                "Select the template repository root folder before uploading.")
+            Throw New RepositoryStructureMismatchException(missingPaths)
         End If
     End Sub
+
+    Public Class RepositoryStructureMismatchException
+        Inherits AppUserMessageException
+
+        Public ReadOnly Property MissingPaths As List(Of String)
+
+        Public Sub New(missingPaths As List(Of String))
+            MyBase.New(BuildMessage(missingPaths))
+            Me.MissingPaths = New List(Of String)(missingPaths)
+        End Sub
+
+        Private Shared Function BuildMessage(missingPaths As List(Of String)) As String
+            Dim shownPaths = String.Join(Environment.NewLine, missingPaths.Take(10))
+            If missingPaths.Count > 10 Then
+                shownPaths &= Environment.NewLine & "...and " & (missingPaths.Count - 10).ToString() & " more"
+            End If
+
+            Return "The selected folder does not match the selected GitHub template repository." & Environment.NewLine & Environment.NewLine &
+                "Missing required top-level folder/file from selected folder:" & Environment.NewLine & shownPaths & Environment.NewLine & Environment.NewLine &
+                "Select the template repository root folder before uploading."
+        End Function
+    End Class
 
     Private Shared Function GetTopLevelRepositoryEntry(relativePath As String) As String
         Dim normalizedPath = If(relativePath, String.Empty).Replace("\"c, "/"c).Trim("/"c)

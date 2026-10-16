@@ -621,13 +621,35 @@ Public Class MainForm
         AppLogger.Info("Super User upload started. Template: " & selectedTemplate.TemplateKey & "; Folder: " & _superFolderTextBox.Text.Trim())
 
         Try
-            Dim summary = Await GithubRepositoryUploader.UploadDirectoryAsync(
-                repositoryUrl,
-                repositoryBranch,
-                githubToken,
-                _superFolderTextBox.Text.Trim(),
-                commitMessage,
-                AddressOf SetSuperUploadProgress)
+            Dim summary As GithubRepositoryUploader.UploadSummary = Nothing
+            Dim allowRepositoryStructureReplace = False
+            Dim uploadCompleted = False
+
+            Do While Not uploadCompleted
+                Try
+                    summary = Await GithubRepositoryUploader.UploadDirectoryAsync(
+                        repositoryUrl,
+                        repositoryBranch,
+                        githubToken,
+                        _superFolderTextBox.Text.Trim(),
+                        commitMessage,
+                        AddressOf SetSuperUploadProgress,
+                        allowRepositoryStructureReplace)
+                    uploadCompleted = True
+                Catch structureEx As GithubRepositoryUploader.RepositoryStructureMismatchException When Not allowRepositoryStructureReplace
+                    Dim replaceMessage = structureEx.Message & Environment.NewLine & Environment.NewLine &
+                        "If this happened because the wrong internal folder was uploaded earlier, you can replace the GitHub repository structure with the selected folder now." & Environment.NewLine & Environment.NewLine &
+                        "This will delete files from GitHub that are not in the selected folder. Continue?"
+
+                    If MessageBox.Show(Me, replaceMessage, "Replace GitHub Repository Structure?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) <> DialogResult.Yes Then
+                        Throw
+                    End If
+
+                    allowRepositoryStructureReplace = True
+                    AppLogger.Info("User confirmed repository structure replacement for Super User upload.")
+                    SetSuperUploadProgress(New GithubRepositoryUploader.UploadProgress With {.Message = "Replacing repository structure with selected folder...", .Current = 0, .Total = 0})
+                End Try
+            Loop
 
             _superProgressBar.Style = ProgressBarStyle.Blocks
             _superProgressBar.MarqueeAnimationSpeed = 0
