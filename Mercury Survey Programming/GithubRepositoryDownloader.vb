@@ -223,6 +223,17 @@ Public Class GithubRepositoryDownloader
         AddBranchCandidate(branchCandidates, "main")
         AddBranchCandidate(branchCandidates, "master")
 
+        Dim remoteBranches = Await GetBranchNamesAsync(repo, githubToken)
+        For Each remoteBranch As String In remoteBranches
+            AddBranchCandidate(branchCandidates, remoteBranch)
+        Next
+
+        If remoteBranches.Count = 0 Then
+            Throw New AppUserMessageException(
+                "GitHub repository access worked, but " & repo.Owner & "/" & repo.Name & " does not appear to have any branches." & Environment.NewLine & Environment.NewLine &
+                "Open the repository in GitHub and make sure it has at least one committed file before using it as a template.")
+        End If
+
         For Each branchCandidate As String In branchCandidates
             If Await BranchExistsAsync(repo, branchCandidate, githubToken) Then
                 Dim requestedBranchLabel = If(String.IsNullOrWhiteSpace(requestedBranch), "(blank)", requestedBranch.Trim())
@@ -297,6 +308,32 @@ Public Class GithubRepositoryDownloader
                 Return response.IsSuccessStatusCode
             End Using
         End Using
+    End Function
+
+    Private Shared Async Function GetBranchNamesAsync(repo As GithubRepository, githubToken As String) As Task(Of List(Of String))
+        Dim branches = New List(Of String)()
+        Dim apiUrl = "https://api.github.com/repos/" & Uri.EscapeDataString(repo.Owner) & "/" & Uri.EscapeDataString(repo.Name) & "/branches?per_page=100"
+
+        Using request = CreateGithubRequest(HttpMethod.Get, apiUrl, githubToken)
+            Using response = Await Http.SendAsync(request)
+                Dim responseText = Await response.Content.ReadAsStringAsync()
+
+                If response.StatusCode = Net.HttpStatusCode.NotFound Then
+                    Return branches
+                End If
+
+                If Not response.IsSuccessStatusCode Then
+                    Throw New AppUserMessageException("GitHub branch list check failed with HTTP " & CInt(response.StatusCode) & ". " & GetGithubErrorMessage(responseText))
+                End If
+
+                For Each match As Match In Regex.Matches(responseText, """name""\s*:\s*""(?<branch>(?:\\.|[^""])*)""")
+                    Dim branchName = Regex.Unescape(match.Groups("branch").Value)
+                    AddBranchCandidate(branches, branchName)
+                Next
+            End Using
+        End Using
+
+        Return branches
     End Function
 
     Private Shared Async Function DownloadFileAsync(url As String, outputPath As String, githubToken As String) As Task
