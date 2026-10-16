@@ -92,9 +92,6 @@ Public Class GithubRepositoryDownloader
         EnsureTargetIsInsideDestination(fullDestinationParent, targetPath)
 
         Dim repo = ParseGithubRepository(repoUrl)
-        If String.IsNullOrWhiteSpace(branch) Then
-            branch = "main"
-        End If
 
         MoveExistingTargetToOldFolder(targetPath, progress)
 
@@ -110,6 +107,9 @@ Public Class GithubRepositoryDownloader
             Directory.CreateDirectory(extractPath)
 
             Try
+                progress?.Invoke("Checking GitHub repository access...")
+                branch = Await ResolveDownloadBranchAsync(repo, branch, githubToken)
+
                 progress?.Invoke("Downloading " & repo.Owner & "/" & repo.Name & " (" & branch & ")...")
                 Await DownloadFileAsync(BuildArchiveUrl(repo.Owner, repo.Name, branch), zipPath, githubToken)
 
@@ -211,26 +211,119 @@ Public Class GithubRepositoryDownloader
         Return "https://api.github.com/repos/" & Uri.EscapeDataString(owner) & "/" & Uri.EscapeDataString(repoName) & "/zipball/" & encodedBranch
     End Function
 
-    Private Shared Async Function DownloadFileAsync(url As String, outputPath As String, githubToken As String) As Task
-        Using request = New HttpRequestMessage(HttpMethod.Get, url)
-            request.Headers.UserAgent.ParseAdd("MercurySurveyProgramming/1.0")
+    Private Shared Async Function ResolveDownloadBranchAsync(repo As GithubRepository, requestedBranch As String, githubToken As String) As Task(Of String)
+        Dim repoInfo = Await GetRepositoryInfoAsync(repo, githubToken)
+        Dim branchToUse = If(String.IsNullOrWhiteSpace(requestedBranch), repoInfo.DefaultBranch, requestedBranch.Trim())
 
-            If Not String.IsNullOrWhiteSpace(githubToken) Then
-                request.Headers.Authorization = New AuthenticationHeaderValue("Bearer", githubToken.Trim())
-            End If
+        If String.IsNullOrWhiteSpace(branchToUse) Then
+            branchToUse = "main"
+        End If
 
+        If Await BranchExistsAsync(repo, branchToUse, githubToken) Then
+            Return branchToUse
+        End If
+
+        If String.Equals(branchToUse, "main", StringComparison.OrdinalIgnoreCase) AndAlso
+            Not String.IsNullOrWhiteSpace(repoInfo.DefaultBranch) AndAlso
+            Not String.Equals(repoInfo.DefaultBranch, branchToUse, StringComparison.OrdinalIgnoreCase) AndAlso
+            Await BranchExistsAsync(repo, repoInfo.DefaultBranch, githubToken) Then
+            AppLogger.Info("Configured branch main was not found. Using GitHub default branch instead: " & repoInfo.DefaultBranch)
+            Return repoInfo.DefaultBranch
+        End If
+
+        Throw New AppUserMessageException(
+            "GitHub repository access worked, but branch '" & branchToUse & "' was not found for " & repo.Owner & "/" & repo.Name & "." & Environment.NewLine & Environment.NewLine &
+            "Update the template branch in Super User > Manage Templates.")
+    End Function
+
+    Private Shared Async Function GetRepositoryInfoAsync(repo As GithubRepository, githubToken As String) As Task(Of GithubRepositoryInfo)
+        Dim apiUrl = "https://api.github.com/repos/" & Uri.EscapeDataString(repo.Owner) & "/" & Uri.EscapeDataString(repo.Name)
+        Using request = CreateGithubRequest(HttpMethod.Get, apiUrl, githubToken)
             Using response = Await Http.SendAsync(request)
-            If Not response.IsSuccessStatusCode Then
-                Throw New AppUserMessageException("GitHub archive download failed with HTTP " & CInt(response.StatusCode) & ".")
-            End If
+                Dim responseText = Await response.Content.ReadAsStringAsync()
 
-            Using input = Await response.Content.ReadAsStreamAsync()
-                Using output = File.Create(outputPath)
-                    Await input.CopyToAsync(output)
-                End Using
-            End Using
+                If response.IsSuccessStatusCode Then
+                    Dim defaultBranch = String.Empty
+                    Dim match = Regex.Match(responseText, """default_branch""\s*:\s*""(?<branch>[^""]+)""")
+                    If match.Success Then
+                        defaultBranch = match.Groups("branch").Value
+                    End If
+
+                    Return New GithubRepositoryInfo With {.DefaultBranch = defaultBranch}
+                End If
+
+                If response.StatusCode = Net.HttpStatusCode.NotFound Then
+                    If String.IsNullOrWhiteSpace(githubToken) Then
+                        Throw New AppUserMessageException(
+                            "GitHub could not find " & repo.Owner & "/" & repo.Name & "." & Environment.NewLine & Environment.NewLine &
+                            "If this is a private repository, save a GitHub token for the selected template first.")
+                    End If
+
+                    Throw New AppUserMessageException(
+                        "GitHub could not find " & repo.Owner & "/" & repo.Name & " using the saved token." & Environment.NewLine & Environment.NewLine &
+                        "Check the repository URL and make sure the saved token has access to this private repository.")
+                End If
+
+                If response.StatusCode = Net.HttpStatusCode.Unauthorized OrElse response.StatusCode = Net.HttpStatusCode.Forbidden Then
+                    Throw New AppUserMessageException(
+                        "GitHub rejected the saved token for " & repo.Owner & "/" & repo.Name & " with HTTP " & CInt(response.StatusCode) & "." & Environment.NewLine & Environment.NewLine &
+                        "Save a new token for this template with repository Contents read access.")
+                End If
+
+                Throw New AppUserMessageException("GitHub repository check failed with HTTP " & CInt(response.StatusCode) & ". " & GetGithubErrorMessage(responseText))
             End Using
         End Using
+    End Function
+
+    Private Shared Async Function BranchExistsAsync(repo As GithubRepository, branch As String, githubToken As String) As Task(Of Boolean)
+        Dim apiUrl = "https://api.github.com/repos/" & Uri.EscapeDataString(repo.Owner) & "/" & Uri.EscapeDataString(repo.Name) & "/branches/" & Uri.EscapeDataString(branch)
+        Using request = CreateGithubRequest(HttpMethod.Get, apiUrl, githubToken)
+            Using response = Await Http.SendAsync(request)
+                Return response.IsSuccessStatusCode
+            End Using
+        End Using
+    End Function
+
+    Private Shared Async Function DownloadFileAsync(url As String, outputPath As String, githubToken As String) As Task
+        Using request = CreateGithubRequest(HttpMethod.Get, url, githubToken)
+            Using response = Await Http.SendAsync(request)
+                If Not response.IsSuccessStatusCode Then
+                    Dim responseText = Await response.Content.ReadAsStringAsync()
+                    Throw New AppUserMessageException("GitHub archive download failed with HTTP " & CInt(response.StatusCode) & ". " & GetGithubErrorMessage(responseText))
+                End If
+
+                Using input = Await response.Content.ReadAsStreamAsync()
+                    Using output = File.Create(outputPath)
+                        Await input.CopyToAsync(output)
+                    End Using
+                End Using
+            End Using
+        End Using
+    End Function
+
+    Private Shared Function CreateGithubRequest(method As HttpMethod, url As String, githubToken As String) As HttpRequestMessage
+        Dim request = New HttpRequestMessage(method, url)
+        request.Headers.UserAgent.ParseAdd("MercurySurveyProgramming/1.0")
+        request.Headers.Accept.ParseAdd("application/vnd.github+json")
+
+        If Not String.IsNullOrWhiteSpace(githubToken) Then
+            request.Headers.Authorization = New AuthenticationHeaderValue("Bearer", githubToken.Trim())
+        End If
+
+        Return request
+    End Function
+
+    Private Shared Function GetGithubErrorMessage(responseText As String) As String
+        If String.IsNullOrWhiteSpace(responseText) Then
+            Return String.Empty
+        End If
+
+        Dim match = Regex.Match(responseText, """message""\s*:\s*""(?<message>(?:\\.|[^""])*)""")
+        If match.Success Then
+            Return "GitHub said: " & Regex.Unescape(match.Groups("message").Value)
+        End If
+
+        Return responseText
     End Function
 
     Private Shared Sub RemoveNewProjectExcludedFiles(repositoryPath As String, progress As Action(Of String))
@@ -369,6 +462,32 @@ Public Class GithubRepositoryDownloader
             Dim relativePath = GetRelativePath(sourceDirectory, filePath)
             Dim targetFile = Path.Combine(targetDirectory, relativePath)
             RunWithRetry("Copying " & Path.GetFileName(filePath), Sub() File.Copy(filePath, targetFile, overwrite:=False), progress)
+        Next
+
+        VerifyDirectoryMirror(sourceDirectory, targetDirectory)
+    End Sub
+
+    Private Shared Sub VerifyDirectoryMirror(sourceDirectory As String, targetDirectory As String)
+        For Each directoryPath As String In Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories)
+            Dim relativePath = GetRelativePath(sourceDirectory, directoryPath)
+            Dim targetPath = Path.Combine(targetDirectory, relativePath)
+            If Not Directory.Exists(targetPath) Then
+                Throw New IOException("Copied project is incomplete. Missing folder: " & relativePath)
+            End If
+        Next
+
+        For Each filePath As String In Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories)
+            Dim relativePath = GetRelativePath(sourceDirectory, filePath)
+            Dim targetPath = Path.Combine(targetDirectory, relativePath)
+            If Not File.Exists(targetPath) Then
+                Throw New IOException("Copied project is incomplete. Missing file: " & relativePath)
+            End If
+
+            Dim sourceLength = New FileInfo(filePath).Length
+            Dim targetLength = New FileInfo(targetPath).Length
+            If sourceLength <> targetLength Then
+                Throw New IOException("Copied project is incomplete. File size mismatch: " & relativePath)
+            End If
         Next
     End Sub
 
@@ -757,6 +876,10 @@ Public Class GithubRepositoryDownloader
     Private Class GithubRepository
         Public Property Owner As String
         Public Property Name As String
+    End Class
+
+    Private Class GithubRepositoryInfo
+        Public Property DefaultBranch As String
     End Class
 
     Private Class ProjectFolderPlan

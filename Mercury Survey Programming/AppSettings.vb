@@ -456,6 +456,7 @@ Public Class AppSettings
             Return False
         End If
 
+        PreserveLocalGithubTokens(downloadedMappings)
         RepositoryMappings = downloadedMappings
         ApplyDefaults()
         SaveRepositoryMappings()
@@ -521,6 +522,44 @@ Public Class AppSettings
         Next
 
         RepositoryMappings = normalizedMappings
+    End Sub
+
+    Private Sub PreserveLocalGithubTokens(downloadedMappings As Dictionary(Of String, RepositoryTemplateMapping))
+        If downloadedMappings Is Nothing OrElse RepositoryMappings Is Nothing Then
+            Return
+        End If
+
+        For Each downloadedEntry In downloadedMappings
+            If downloadedEntry.Value Is Nothing Then
+                Continue For
+            End If
+
+            Dim localMapping As RepositoryTemplateMapping = Nothing
+            Dim localMappingKey = GetRepositoryMappingKeyForDimensionsUrl(downloadedEntry.Key)
+            If Not String.IsNullOrWhiteSpace(localMappingKey) AndAlso RepositoryMappings.ContainsKey(localMappingKey) Then
+                localMapping = RepositoryMappings(localMappingKey)
+            ElseIf RepositoryMappings.ContainsKey(downloadedEntry.Key) Then
+                localMapping = RepositoryMappings(downloadedEntry.Key)
+            End If
+
+            If localMapping Is Nothing Then
+                Continue For
+            End If
+
+            For Each templateKey As String In downloadedEntry.Value.GetTemplateKeys()
+                Dim downloadedInfo = downloadedEntry.Value.GetTemplateInfo(templateKey)
+                Dim localInfo = localMapping.GetTemplateInfo(templateKey)
+
+                If downloadedInfo Is Nothing OrElse localInfo Is Nothing Then
+                    Continue For
+                End If
+
+                If String.IsNullOrWhiteSpace(downloadedInfo.GithubToken) AndAlso Not String.IsNullOrWhiteSpace(localInfo.GithubToken) Then
+                    downloadedEntry.Value.SetTemplateInfo(templateKey, downloadedInfo.RepositoryUrl, downloadedInfo.OldMddName, downloadedInfo.Branch, localInfo.GithubToken)
+                    AppLogger.Info("Preserved locally saved GitHub token for template during shared configuration sync: " & templateKey)
+                End If
+            Next
+        Next
     End Sub
 
     Public Async Function UploadSuperUsersToGithubAsync(templateKey As String) As Task
