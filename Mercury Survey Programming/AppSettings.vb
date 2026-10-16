@@ -579,7 +579,12 @@ Public Class AppSettings
     End Function
 
     Private Function GetSharedConfigurationWriteToken(templateKey As String) As String
-        Return GetSharedConfigurationToken()
+        Dim savedSharedToken = GetSharedConfigurationGithubToken()
+        If Not String.IsNullOrWhiteSpace(savedSharedToken) Then
+            Return savedSharedToken
+        End If
+
+        Return LoadSharedConfigurationGithubToken()
     End Function
 
     Private Function GetFirstRepositoryAccessForDimensionsUrl(dimensionsUrl As String) As RepositoryAccessInfo

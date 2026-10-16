@@ -335,19 +335,108 @@ Public Class TemplateManagerForm
         ToggleInputs(False)
         SetStatus("Syncing templates to GitHub...", False)
 
+        Dim syncException As Exception = Nothing
+
         Try
             Await _settings.UploadRepositoryMappingsToGithubAsync("classic")
             SetStatus("Template list synced to GitHub.", False)
             AppLogger.Info("Template list synced to GitHub.")
             Return True
         Catch ex As Exception
-            SetStatus(ex.Message, True)
-            AppLogger.Error("Template list sync failed.", ex)
-            MessageBox.Show(Me, ex.Message, "Template Sync Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning)
-            Return False
-        Finally
-            ToggleInputs(True)
+            syncException = ex
         End Try
+
+        If IsSharedConfigurationPermissionError(syncException) Then
+            Dim token = PromptForSharedConfigurationToken()
+            If Not String.IsNullOrWhiteSpace(token) Then
+                Try
+                    _settings.SetSharedConfigurationGithubToken(token)
+                    _settings.Save()
+                    Await _settings.UploadRepositoryMappingsToGithubAsync("classic")
+                    SetStatus("Template list synced to GitHub.", False)
+                    AppLogger.Info("Template list synced to GitHub after shared configuration token update.")
+                    Return True
+                Catch retryEx As Exception
+                    syncException = retryEx
+                End Try
+            End If
+        End If
+
+        SetStatus(syncException.Message, True)
+        AppLogger.Error("Template list sync failed.", syncException)
+        MessageBox.Show(Me, GetFriendlySyncError(syncException), "Template Sync Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+        ToggleInputs(True)
+        Return False
+    End Function
+
+    Private Function PromptForSharedConfigurationToken() As String
+        Using promptForm = New Form()
+            promptForm.Text = "Shared Configuration Token"
+            AppBrand.ApplyTo(promptForm)
+            promptForm.StartPosition = FormStartPosition.CenterParent
+            promptForm.FormBorderStyle = FormBorderStyle.FixedDialog
+            promptForm.MaximizeBox = False
+            promptForm.MinimizeBox = False
+            promptForm.ClientSize = New Size(560, 178)
+
+            Dim messageLabel = New Label() With {
+                .Text = "GitHub rejected the saved shared configuration token." & Environment.NewLine &
+                    "Paste a GitHub token with Contents read/write access to praneetpant/setupshared.",
+                .Location = New Point(18, 16),
+                .Size = New Size(520, 48)
+            }
+
+            Dim tokenTextBox = New TextBox() With {
+                .Location = New Point(18, 76),
+                .Size = New Size(520, 24),
+                .UseSystemPasswordChar = True
+            }
+
+            Dim saveButton = New Button() With {.Text = "Save and Retry", .Location = New Point(326, 124), .Size = New Size(112, 30)}
+            Dim cancelButton = New Button() With {.Text = "Cancel", .Location = New Point(456, 124), .Size = New Size(82, 30)}
+
+            AddHandler saveButton.Click, Sub()
+                                             If String.IsNullOrWhiteSpace(tokenTextBox.Text) Then
+                                                 MessageBox.Show(promptForm, "Paste the shared configuration token.", "Token Required", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                                                 tokenTextBox.Focus()
+                                                 Return
+                                             End If
+
+                                             promptForm.DialogResult = DialogResult.OK
+                                             promptForm.Close()
+                                         End Sub
+            AddHandler cancelButton.Click, Sub()
+                                               promptForm.DialogResult = DialogResult.Cancel
+                                               promptForm.Close()
+                                           End Sub
+
+            promptForm.AcceptButton = saveButton
+            promptForm.CancelButton = cancelButton
+            promptForm.Controls.AddRange({messageLabel, tokenTextBox, saveButton, cancelButton})
+
+            If promptForm.ShowDialog(Me) = DialogResult.OK Then
+                Return tokenTextBox.Text.Trim()
+            End If
+        End Using
+
+        Return String.Empty
+    End Function
+
+    Private Shared Function IsSharedConfigurationPermissionError(ex As Exception) As Boolean
+        Dim message = If(ex Is Nothing, String.Empty, ex.Message)
+        Return message.IndexOf("HTTP 403", StringComparison.OrdinalIgnoreCase) >= 0 AndAlso
+            (message.IndexOf("repositories.json", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+             message.IndexOf("Resource not accessible", StringComparison.OrdinalIgnoreCase) >= 0)
+    End Function
+
+    Private Shared Function GetFriendlySyncError(ex As Exception) As String
+        If IsSharedConfigurationPermissionError(ex) Then
+            Return "GitHub rejected the shared configuration token." & Environment.NewLine & Environment.NewLine &
+                "Use a GitHub token that has write access to praneetpant/setupshared and Contents read/write permission." & Environment.NewLine & Environment.NewLine &
+                "Original error: " & ex.Message
+        End If
+
+        Return ex.Message
     End Function
 
     Private Sub ClearTemplateFields()
