@@ -10,9 +10,86 @@ $sharedRepositoriesJson = Join-Path $PSScriptRoot 'Shared\repositories.json'
 $sharedConfigurationTokenFile = Join-Path $PSScriptRoot 'Shared\shared-config-token.txt'
 $includeSharedConfigurationToken = $env:MERCURY_INCLUDE_SHARED_TOKEN -eq '1'
 
+function Get-SignToolPath {
+    if (-not [string]::IsNullOrWhiteSpace($env:MERCURY_SIGNTOOL_PATH) -and (Test-Path -LiteralPath $env:MERCURY_SIGNTOOL_PATH)) {
+        return $env:MERCURY_SIGNTOOL_PATH
+    }
+
+    $command = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($null -ne $command) {
+        return $command.Source
+    }
+
+    $kitRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+    if (Test-Path -LiteralPath $kitRoot) {
+        $candidate = Get-ChildItem -LiteralPath $kitRoot -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+
+        if ($null -ne $candidate) {
+            return $candidate.FullName
+        }
+    }
+
+    return $null
+}
+
+function Invoke-CodeSign {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $certPath = $env:MERCURY_SIGN_CERT_PATH
+    $certPassword = $env:MERCURY_SIGN_CERT_PASSWORD
+    $certThumbprint = $env:MERCURY_SIGN_CERT_SHA1
+    $timestampUrl = $env:MERCURY_SIGN_TIMESTAMP_URL
+
+    if ([string]::IsNullOrWhiteSpace($timestampUrl)) {
+        $timestampUrl = 'http://timestamp.digicert.com'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($certPath) -and [string]::IsNullOrWhiteSpace($certThumbprint)) {
+        Write-Warning "Code signing skipped for $Description. Set MERCURY_SIGN_CERT_PATH or MERCURY_SIGN_CERT_SHA1 to sign release files."
+        return
+    }
+
+    $signTool = Get-SignToolPath
+    if ([string]::IsNullOrWhiteSpace($signTool)) {
+        throw 'signtool.exe was not found. Install the Windows SDK or set MERCURY_SIGNTOOL_PATH.'
+    }
+
+    $arguments = @('sign', '/fd', 'SHA256', '/tr', $timestampUrl, '/td', 'SHA256')
+
+    if (-not [string]::IsNullOrWhiteSpace($certPath)) {
+        if (-not (Test-Path -LiteralPath $certPath)) {
+            throw "Signing certificate was not found: $certPath"
+        }
+
+        $arguments += @('/f', $certPath)
+        if (-not [string]::IsNullOrWhiteSpace($certPassword)) {
+            $arguments += @('/p', $certPassword)
+        }
+    } else {
+        $arguments += @('/sha1', $certThumbprint)
+        if ($env:MERCURY_SIGN_CERT_STORE -eq 'machine') {
+            $arguments += '/sm'
+        }
+    }
+
+    $arguments += $Path
+    & $signTool @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Code signing failed for $Description."
+    }
+}
+
 if (-not (Test-Path -LiteralPath (Join-Path $projectOutput 'Mercury Survey Programming.exe'))) {
     throw 'Release build output was not found. Build the solution in Release mode first.'
 }
+
+Invoke-CodeSign -Path (Join-Path $projectOutput 'Mercury Survey Programming.exe') -Description 'application EXE'
 
 if (Test-Path -LiteralPath $sourceSetup) {
     Remove-Item -LiteralPath $sourceSetup -Recurse -Force
@@ -128,4 +205,5 @@ if (-not (Test-Path -LiteralPath $tempSetup) -or (Get-Item -LiteralPath $tempSet
 }
 
 Copy-Item -LiteralPath $tempSetup -Destination $setupExe -Force
+Invoke-CodeSign -Path $setupExe -Description 'setup EXE'
 Get-Item -LiteralPath $setupExe

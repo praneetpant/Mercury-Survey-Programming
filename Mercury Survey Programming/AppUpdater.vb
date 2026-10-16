@@ -354,27 +354,8 @@ Public NotInheritable Class AppUpdater
     End Sub
 
     Private Shared Sub LaunchInstallerAfterExit(installerPath As String)
-        Dim updateDirectory = Path.Combine(Path.GetTempPath(), "Mercury Survey Programming Update")
-        Directory.CreateDirectory(updateDirectory)
-
-        Dim scriptPath = Path.Combine(updateDirectory, "run-installer-after-exit.ps1")
-        Dim processId = Process.GetCurrentProcess().Id
-
-        Dim script = "param([string]$Installer, [int]$ProcessId)" & Environment.NewLine &
-            "$ErrorActionPreference = 'Stop'" & Environment.NewLine &
-            "try { Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction SilentlyContinue } catch { }" & Environment.NewLine &
-            "Start-Process -FilePath $Installer" & Environment.NewLine
-
-        File.WriteAllText(scriptPath, script)
-
-        Dim arguments = "-NoProfile -ExecutionPolicy Bypass -File " & QuoteArgument(scriptPath) &
-            " -Installer " & QuoteArgument(installerPath) &
-            " -ProcessId " & processId.ToString()
-
-        Process.Start(New ProcessStartInfo("powershell.exe", arguments) With {
-            .UseShellExecute = False,
-            .CreateNoWindow = True,
-            .WindowStyle = ProcessWindowStyle.Hidden
+        Process.Start(New ProcessStartInfo(installerPath) With {
+            .UseShellExecute = True
         })
     End Sub
 

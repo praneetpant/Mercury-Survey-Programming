@@ -35,3 +35,25 @@ This installer does not use ClickOnce signing, so it avoids ClickOnce digital
 signature/manifest validation errors. Windows may still show "Unknown publisher"
 or SmartScreen warnings until the installer is signed with a trusted
 code-signing certificate.
+
+Antivirus / Norton CyberCapture
+-------------------------------
+Unsigned installer and updater EXEs can be flagged by reputation-based antivirus
+systems because each release is a new executable downloaded from the internet.
+The durable fix is to sign every release with a trusted Authenticode code-signing
+certificate.
+
+build-installer.ps1 supports automatic signing when these environment variables
+are set before building:
+
+MERCURY_SIGN_CERT_PATH       Path to a .pfx code-signing certificate.
+MERCURY_SIGN_CERT_PASSWORD   Password for the .pfx certificate.
+MERCURY_SIGN_CERT_SHA1       Optional certificate thumbprint from the Windows cert store.
+MERCURY_SIGN_CERT_STORE      Set to machine when using a LocalMachine cert store thumbprint.
+MERCURY_SIGN_TIMESTAMP_URL   Optional timestamp server. Defaults to DigiCert.
+MERCURY_SIGNTOOL_PATH        Optional explicit path to signtool.exe.
+
+When signing is configured, the build signs both Mercury Survey Programming.exe
+and Mercury Survey Programming Setup.exe. Without a trusted certificate, the
+build still works but antivirus reputation warnings may continue until Norton
+has seen enough clean installs or the file is submitted to Norton for review.

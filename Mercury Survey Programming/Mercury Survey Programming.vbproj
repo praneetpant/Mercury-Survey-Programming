@@ -15,8 +15,8 @@
     <MyType>WindowsForms</MyType>
     <OptionInfer>On</OptionInfer>
     <ApplicationIcon>Assets\MercuryLogo.ico</ApplicationIcon>
-    <AssemblyVersion>1.2.8.0</AssemblyVersion>
-    <FileVersion>1.2.8.0</FileVersion>
+    <AssemblyVersion>1.2.9.0</AssemblyVersion>
+    <FileVersion>1.2.9.0</FileVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
