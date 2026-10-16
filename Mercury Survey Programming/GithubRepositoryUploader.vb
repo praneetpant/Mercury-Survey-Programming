@@ -73,7 +73,12 @@ Public Class GithubRepositoryUploader
 
         progress?.Invoke(New UploadProgress With {.Message = "Checking folder structure against GitHub...", .Current = 0, .Total = 0})
         Dim remoteEntries = Await GetRemoteTreeEntriesAsync(repo, branch, githubToken)
-        ValidateSourceDirectoryMatchesRepository(remoteEntries, sourceDirectory)
+        If remoteEntries.Count = 0 Then
+            progress?.Invoke(New UploadProgress With {.Message = "Repository is empty. Starting initial upload...", .Current = 0, .Total = 0})
+            AppLogger.Info("Super User upload detected empty GitHub repository. Initial upload will create repository contents.")
+        Else
+            ValidateSourceDirectoryMatchesRepository(remoteEntries, sourceDirectory)
+        End If
 
         Dim files = Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories).
             Where(Function(path) Not ShouldSkipPath(sourceDirectory, path)).
@@ -197,6 +202,11 @@ Public Class GithubRepositoryUploader
             Using response = Await Http.SendAsync(request)
                 Dim responseText = Await response.Content.ReadAsStringAsync()
                 If Not response.IsSuccessStatusCode Then
+                    If response.StatusCode = HttpStatusCode.Conflict AndAlso IsEmptyRepositoryResponse(responseText) Then
+                        AppLogger.Info("GitHub repository tree is empty. Treating upload as initial repository upload.")
+                        Return New List(Of RemoteTreeEntry)()
+                    End If
+
                     Throw New AppUserMessageException("GitHub could not read the repository folder structure. HTTP " & CInt(response.StatusCode) & ": " & responseText)
                 End If
 
@@ -247,11 +257,12 @@ Public Class GithubRepositoryUploader
 
         Using request = CreateRequest(HttpMethod.Get, url, githubToken)
             Using response = Await Http.SendAsync(request)
-                If response.StatusCode = HttpStatusCode.NotFound Then
+                Dim responseText = Await response.Content.ReadAsStringAsync()
+                If response.StatusCode = HttpStatusCode.NotFound OrElse
+                    (response.StatusCode = HttpStatusCode.Conflict AndAlso IsEmptyRepositoryResponse(responseText)) Then
                     Return New RemoteFileInfo With {.Exists = False}
                 End If
 
-                Dim responseText = Await response.Content.ReadAsStringAsync()
                 If Not response.IsSuccessStatusCode Then
                     Throw New AppUserMessageException("GitHub could not read " & relativePath & ". HTTP " & CInt(response.StatusCode) & ": " & responseText)
                 End If
@@ -391,6 +402,12 @@ Public Class GithubRepositoryUploader
         End If
 
         Return UnescapeJsonString(match.Groups("value").Value)
+    End Function
+
+    Private Shared Function IsEmptyRepositoryResponse(responseText As String) As Boolean
+        Dim message = GetJsonString(If(responseText, String.Empty), "message")
+        Return Not String.IsNullOrWhiteSpace(message) AndAlso
+            message.IndexOf("repository is empty", StringComparison.OrdinalIgnoreCase) >= 0
     End Function
 
     Private Shared Function EscapeJsonString(value As String) As String
