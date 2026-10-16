@@ -126,7 +126,7 @@ Public Class GithubRepositoryDownloader
 
                 Throw New AppUserMessageException(
                     "Could not download the GitHub repository using the GitHub API." & Environment.NewLine & Environment.NewLine &
-                    "Make sure the GitHub token is saved for the selected template and has access to this private repository." & Environment.NewLine & Environment.NewLine &
+                    "Check the selected template repository URL, branch, and GitHub token." & Environment.NewLine & Environment.NewLine &
                     "Details: " & details)
             End Try
 
@@ -213,28 +213,43 @@ Public Class GithubRepositoryDownloader
 
     Private Shared Async Function ResolveDownloadBranchAsync(repo As GithubRepository, requestedBranch As String, githubToken As String) As Task(Of String)
         Dim repoInfo = Await GetRepositoryInfoAsync(repo, githubToken)
-        Dim branchToUse = If(String.IsNullOrWhiteSpace(requestedBranch), repoInfo.DefaultBranch, requestedBranch.Trim())
+        Dim branchCandidates = New List(Of String)()
 
-        If String.IsNullOrWhiteSpace(branchToUse) Then
-            branchToUse = "main"
+        If Not String.IsNullOrWhiteSpace(requestedBranch) Then
+            AddBranchCandidate(branchCandidates, requestedBranch)
         End If
 
-        If Await BranchExistsAsync(repo, branchToUse, githubToken) Then
-            Return branchToUse
-        End If
+        AddBranchCandidate(branchCandidates, repoInfo.DefaultBranch)
+        AddBranchCandidate(branchCandidates, "main")
+        AddBranchCandidate(branchCandidates, "master")
 
-        If String.Equals(branchToUse, "main", StringComparison.OrdinalIgnoreCase) AndAlso
-            Not String.IsNullOrWhiteSpace(repoInfo.DefaultBranch) AndAlso
-            Not String.Equals(repoInfo.DefaultBranch, branchToUse, StringComparison.OrdinalIgnoreCase) AndAlso
-            Await BranchExistsAsync(repo, repoInfo.DefaultBranch, githubToken) Then
-            AppLogger.Info("Configured branch main was not found. Using GitHub default branch instead: " & repoInfo.DefaultBranch)
-            Return repoInfo.DefaultBranch
-        End If
+        For Each branchCandidate As String In branchCandidates
+            If Await BranchExistsAsync(repo, branchCandidate, githubToken) Then
+                Dim requestedBranchLabel = If(String.IsNullOrWhiteSpace(requestedBranch), "(blank)", requestedBranch.Trim())
+                If Not String.Equals(branchCandidate, requestedBranchLabel, StringComparison.OrdinalIgnoreCase) Then
+                    AppLogger.Info("Configured branch '" & requestedBranchLabel & "' was not found. Using available branch instead: " & branchCandidate)
+                End If
+
+                Return branchCandidate
+            End If
+        Next
 
         Throw New AppUserMessageException(
-            "GitHub repository access worked, but branch '" & branchToUse & "' was not found for " & repo.Owner & "/" & repo.Name & "." & Environment.NewLine & Environment.NewLine &
+            "GitHub repository access worked, but no usable branch was found for " & repo.Owner & "/" & repo.Name & "." & Environment.NewLine & Environment.NewLine &
+            "Tried: " & String.Join(", ", branchCandidates.ToArray()) & Environment.NewLine & Environment.NewLine &
             "Update the template branch in Super User > Manage Templates.")
     End Function
+
+    Private Shared Sub AddBranchCandidate(branchCandidates As List(Of String), branch As String)
+        Dim cleaned = If(branch, String.Empty).Trim()
+        If String.IsNullOrWhiteSpace(cleaned) Then
+            Return
+        End If
+
+        If Not branchCandidates.Any(Function(value) String.Equals(value, cleaned, StringComparison.OrdinalIgnoreCase)) Then
+            branchCandidates.Add(cleaned)
+        End If
+    End Sub
 
     Private Shared Async Function GetRepositoryInfoAsync(repo As GithubRepository, githubToken As String) As Task(Of GithubRepositoryInfo)
         Dim apiUrl = "https://api.github.com/repos/" & Uri.EscapeDataString(repo.Owner) & "/" & Uri.EscapeDataString(repo.Name)
