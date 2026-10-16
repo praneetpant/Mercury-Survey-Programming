@@ -1,6 +1,8 @@
 Imports System
+Imports System.Collections.Generic
 Imports System.Diagnostics
 Imports System.IO
+Imports System.Linq
 Imports System.Net
 Imports System.Net.Http
 Imports System.Reflection
@@ -93,17 +95,19 @@ Public NotInheritable Class AppUpdater
     End Function
 
     Private Shared Async Function GetUpdateManifestAsync() As Task(Of UpdateManifest)
+        Dim manifests = New List(Of UpdateManifest)()
         Dim rawFailure As String = String.Empty
+        Dim apiFailure As String = String.Empty
 
         Try
             Dim json = Await FetchStringAsync(BuildRawManifestUrl())
             Dim manifest = ParseManifest(json)
             If manifest IsNot Nothing AndAlso manifest.IsUsable Then
                 AppLogger.Info("Update manifest loaded from raw GitHub URL. Latest version: " & manifest.Version.ToString())
-                Return manifest
+                manifests.Add(manifest)
+            Else
+                rawFailure = "Raw GitHub manifest was found but did not contain usable update data."
             End If
-
-            rawFailure = "Raw GitHub manifest was found but did not contain usable update data."
         Catch ex As Exception
             rawFailure = ex.Message
             AppLogger.Error("Raw GitHub update manifest check failed.", ex)
@@ -115,14 +119,28 @@ Public NotInheritable Class AppUpdater
             Dim manifest = ParseManifest(manifestJson)
             If manifest IsNot Nothing AndAlso manifest.IsUsable Then
                 AppLogger.Info("Update manifest loaded from GitHub API fallback. Latest version: " & manifest.Version.ToString())
-                Return manifest
+                manifests.Add(manifest)
+            Else
+                apiFailure = "GitHub API manifest did not contain usable update data."
+            End If
+        Catch ex As Exception
+            apiFailure = ex.Message
+            AppLogger.Error("GitHub API update manifest fallback failed.", ex)
+        End Try
+
+        If manifests.Count > 0 Then
+            Dim selectedManifest = manifests.
+                OrderByDescending(Function(manifest) manifest.Version).
+                First()
+
+            If manifests.Count > 1 Then
+                AppLogger.Info("Selected update manifest version " & selectedManifest.Version.ToString() & " from " & manifests.Count.ToString() & " manifest sources.")
             End If
 
-            Throw New AppUserMessageException("GitHub API manifest did not contain usable update data.")
-        Catch ex As Exception
-            AppLogger.Error("GitHub API update manifest fallback failed.", ex)
-            Throw New AppUserMessageException("Could not read update information from GitHub." & Environment.NewLine & "Raw check: " & rawFailure & Environment.NewLine & "API check: " & ex.Message)
-        End Try
+            Return selectedManifest
+        End If
+
+        Throw New AppUserMessageException("Could not read update information from GitHub." & Environment.NewLine & "Raw check: " & rawFailure & Environment.NewLine & "API check: " & apiFailure)
     End Function
 
     Private Shared Function BuildRawManifestUrl() As String
