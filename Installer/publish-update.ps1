@@ -3,10 +3,10 @@ $ErrorActionPreference = 'Stop'
 $owner = 'praneetpant'
 $repo = 'setupshared'
 $branch = 'main'
-$tag = 'v1.2.17'
-$releaseName = 'Mercury Survey Programming v1.2.17'
-$setupAssetName = 'setup-v1.2.17.exe'
-$exeAssetName = 'Mercury Survey Programming v1.2.17.exe'
+$tag = 'v1.2.18'
+$releaseName = 'Mercury Survey Programming v1.2.18'
+$setupAssetName = 'setup-v1.2.18.exe'
+$exeAssetName = 'Mercury Survey Programming v1.2.18.exe'
 $root = Split-Path -Parent $PSScriptRoot
 $setupPath = Join-Path $PSScriptRoot 'Output\Mercury Survey Programming Setup.exe'
 $exePath = Join-Path $root 'Mercury Survey Programming\bin\Release\Mercury Survey Programming.exe'
@@ -221,7 +221,7 @@ Remove-ExistingAsset -Release $release -Name $setupAssetName
 Remove-ExistingAsset -Release $release -Name $exeAssetName
 Add-ReleaseAsset -Release $release -Path $setupPath -Name $setupAssetName
 Add-ReleaseAsset -Release $release -Path $exePath -Name $exeAssetName
-Update-RepositoryFile -RepositoryPath 'app-update.json' -LocalPath $manifestPath -Message 'Update app auto-update manifest to v1.2.17'
+Update-RepositoryFile -RepositoryPath 'app-update.json' -LocalPath $manifestPath -Message 'Update app auto-update manifest to v1.2.18'
 
 [pscustomobject]@{
     Release = $release.html_url

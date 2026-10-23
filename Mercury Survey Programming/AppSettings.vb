@@ -434,9 +434,7 @@ Public Class AppSettings
     End Sub
 
     Public Async Function SyncSuperUsersFromGithubAsync() As Task(Of Boolean)
-        Dim syncToken = GetSharedConfigurationToken()
-
-        Dim json = Await GithubRepositoryUploader.DownloadTextFileAsync(SharedConfigurationRepositoryUrl, SharedConfigurationBranch, syncToken, SuperUsersRepositoryPath)
+        Dim json = Await DownloadSharedTextFileWithFallbackAsync(SuperUsersRepositoryPath)
         If String.IsNullOrWhiteSpace(json) Then
             Return False
         End If
@@ -453,9 +451,7 @@ Public Class AppSettings
     End Function
 
     Public Async Function SyncRepositoryMappingsFromGithubAsync() As Task(Of Boolean)
-        Dim syncToken = GetSharedConfigurationToken()
-
-        Dim json = Await GithubRepositoryUploader.DownloadTextFileAsync(SharedConfigurationRepositoryUrl, SharedConfigurationBranch, syncToken, RepositoryMappingsRepositoryPath)
+        Dim json = Await DownloadSharedTextFileWithFallbackAsync(RepositoryMappingsRepositoryPath)
         If String.IsNullOrWhiteSpace(json) Then
             Return False
         End If
@@ -474,21 +470,15 @@ Public Class AppSettings
     End Function
 
     Public Async Function UploadRepositoryMappingsToGithubAsync(templateKey As String) As Task
-        Dim githubToken = GetSharedConfigurationWriteToken(templateKey)
-        If String.IsNullOrWhiteSpace(githubToken) Then
-            Throw New AppUserMessageException("Save a GitHub token with write access to the shared configuration repository first.")
-        End If
-
         ApplyDefaults()
         SaveRepositoryMappings()
 
-        Await GithubRepositoryUploader.UploadTextFileAsync(
-            SharedConfigurationRepositoryUrl,
-            SharedConfigurationBranch,
-            githubToken,
+        Await UploadSharedTextFileWithFallbackAsync(
+            templateKey,
             RepositoryMappingsRepositoryPath,
             SerializeRepositoryMappingsJson(),
-            "Update shared repository configuration")
+            "Update shared repository configuration",
+            "GitHub could not upload repositories.json.")
     End Function
 
     Public Function GetRepositoryMappingsSyncText() As String
@@ -572,24 +562,17 @@ Public Class AppSettings
     End Sub
 
     Public Async Function UploadSuperUsersToGithubAsync(templateKey As String) As Task
-        Dim githubToken = GetSharedConfigurationWriteToken(templateKey)
-        If String.IsNullOrWhiteSpace(githubToken) Then
-            Throw New AppUserMessageException("Save a GitHub token with write access to the shared configuration repository first.")
-        End If
-
         ApplyDefaults()
-        Await GithubRepositoryUploader.UploadTextFileAsync(
-            SharedConfigurationRepositoryUrl,
-            SharedConfigurationBranch,
-            githubToken,
+        Await UploadSharedTextFileWithFallbackAsync(
+            templateKey,
             SuperUsersRepositoryPath,
             SerializeJsonStringArray(SuperUsers),
-            "Update superuser list")
+            "Update superuser list",
+            "GitHub could not upload superusers.json.")
     End Function
 
     Public Async Function EnsureNoTemplateUploadInProgressAsync() As Task
-        Dim syncToken = GetSharedConfigurationToken()
-        Dim json = Await GithubRepositoryUploader.DownloadTextFileAsync(SharedConfigurationRepositoryUrl, SharedConfigurationBranch, syncToken, UploadLockRepositoryPath)
+        Dim json = Await DownloadSharedTextFileWithFallbackAsync(UploadLockRepositoryPath)
         If String.IsNullOrWhiteSpace(json) Then
             Return
         End If
@@ -631,11 +614,6 @@ Public Class AppSettings
     End Function
 
     Public Async Function CreateTemplateUploadLockAsync(templateKey As String, templateName As String, repositoryUrl As String, username As String) As Task
-        Dim githubToken = GetSharedConfigurationWriteToken(templateKey)
-        If String.IsNullOrWhiteSpace(githubToken) Then
-            Throw New AppUserMessageException("Could not create the shared upload lock because GitHub write access is not available.")
-        End If
-
         Dim createdUtc = DateTime.UtcNow
         Dim lines = New List(Of String) From {
             "{",
@@ -649,36 +627,134 @@ Public Class AppSettings
             "}"
         }
 
-        Await GithubRepositoryUploader.UploadTextFileAsync(
-            SharedConfigurationRepositoryUrl,
-            SharedConfigurationBranch,
-            githubToken,
+        Await UploadSharedTextFileWithFallbackAsync(
+            templateKey,
             UploadLockRepositoryPath,
             String.Join(Environment.NewLine, lines.ToArray()),
-            "Create template upload lock")
+            "Create template upload lock",
+            "GitHub could not create the shared upload lock.")
 
         AppLogger.Info("Created shared template upload lock.")
     End Function
 
     Public Async Function ClearTemplateUploadLockAsync(templateKey As String) As Task
         Try
-            Dim githubToken = GetSharedConfigurationWriteToken(templateKey)
-            If String.IsNullOrWhiteSpace(githubToken) Then
-                AppLogger.Info("Could not clear shared template upload lock because no shared write token is available.")
-                Return
-            End If
-
-            Await GithubRepositoryUploader.DeleteTextFileIfExistsAsync(
-                SharedConfigurationRepositoryUrl,
-                SharedConfigurationBranch,
-                githubToken,
-                UploadLockRepositoryPath,
-                "Remove template upload lock")
-
+            Await DeleteSharedTextFileWithFallbackAsync(templateKey, UploadLockRepositoryPath, "Remove template upload lock")
             AppLogger.Info("Removed shared template upload lock.")
         Catch ex As Exception
             AppLogger.Error("Could not remove shared template upload lock.", ex)
         End Try
+    End Function
+
+    Private Async Function DownloadSharedTextFileWithFallbackAsync(relativePath As String) As Task(Of String)
+        Dim lastAuthException As Exception = Nothing
+
+        For Each githubToken As String In GetSharedConfigurationReadTokenCandidates()
+            Try
+                Return Await GithubRepositoryUploader.DownloadTextFileAsync(SharedConfigurationRepositoryUrl, SharedConfigurationBranch, githubToken, relativePath)
+            Catch ex As Exception When IsGithubAuthenticationFailure(ex)
+                lastAuthException = ex
+                AppLogger.Info("Shared configuration read credential failed for " & relativePath & ". Trying next credential.")
+            End Try
+        Next
+
+        If lastAuthException IsNot Nothing Then
+            Throw lastAuthException
+        End If
+
+        Return Nothing
+    End Function
+
+    Private Async Function UploadSharedTextFileWithFallbackAsync(templateKey As String, relativePath As String, text As String, commitMessage As String, failureMessage As String) As Task
+        Dim lastAuthException As Exception = Nothing
+
+        For Each githubToken As String In GetSharedConfigurationWriteTokenCandidates(templateKey)
+            If String.IsNullOrWhiteSpace(githubToken) Then
+                Continue For
+            End If
+
+            Try
+                Await GithubRepositoryUploader.UploadTextFileAsync(
+                    SharedConfigurationRepositoryUrl,
+                    SharedConfigurationBranch,
+                    githubToken,
+                    relativePath,
+                    text,
+                    commitMessage)
+                Return
+            Catch ex As Exception When IsGithubAuthenticationFailure(ex)
+                lastAuthException = ex
+                AppLogger.Info("Shared configuration write credential failed for " & relativePath & ". Trying next credential.")
+            End Try
+        Next
+
+        If lastAuthException IsNot Nothing Then
+            Throw New AppUserMessageException(failureMessage & " The saved shared GitHub credential was rejected. Update the shared GitHub token or GitHub App configuration." & Environment.NewLine & Environment.NewLine & "Details: " & lastAuthException.Message, lastAuthException)
+        End If
+
+        Throw New AppUserMessageException(failureMessage & " No shared GitHub write credential is available.")
+    End Function
+
+    Private Async Function DeleteSharedTextFileWithFallbackAsync(templateKey As String, relativePath As String, commitMessage As String) As Task
+        Dim lastAuthException As Exception = Nothing
+
+        For Each githubToken As String In GetSharedConfigurationWriteTokenCandidates(templateKey)
+            If String.IsNullOrWhiteSpace(githubToken) Then
+                Continue For
+            End If
+
+            Try
+                Await GithubRepositoryUploader.DeleteTextFileIfExistsAsync(
+                    SharedConfigurationRepositoryUrl,
+                    SharedConfigurationBranch,
+                    githubToken,
+                    relativePath,
+                    commitMessage)
+                Return
+            Catch ex As Exception When IsGithubAuthenticationFailure(ex)
+                lastAuthException = ex
+                AppLogger.Info("Shared configuration delete credential failed for " & relativePath & ". Trying next credential.")
+            End Try
+        Next
+
+        If lastAuthException IsNot Nothing Then
+            Throw lastAuthException
+        End If
+    End Function
+
+    Private Iterator Function GetSharedConfigurationReadTokenCandidates() As IEnumerable(Of String)
+        Yield String.Empty
+
+        For Each githubToken As String In GetSharedConfigurationWriteTokenCandidates(String.Empty)
+            If Not String.IsNullOrWhiteSpace(githubToken) Then
+                Yield githubToken
+            End If
+        Next
+    End Function
+
+    Private Iterator Function GetSharedConfigurationWriteTokenCandidates(templateKey As String) As IEnumerable(Of String)
+        Dim yieldedTokens = New HashSet(Of String)(StringComparer.Ordinal)
+
+        For Each githubToken As String In New String() {
+            GetGithubAppInstallationToken(),
+            LoadSharedConfigurationGithubToken(),
+            GetSharedConfigurationGithubToken()
+        }
+            Dim cleanedToken = If(githubToken, String.Empty).Trim()
+            If String.IsNullOrWhiteSpace(cleanedToken) OrElse yieldedTokens.Contains(cleanedToken) Then
+                Continue For
+            End If
+
+            yieldedTokens.Add(cleanedToken)
+            Yield cleanedToken
+        Next
+    End Function
+
+    Private Shared Function IsGithubAuthenticationFailure(ex As Exception) As Boolean
+        Dim message = If(ex Is Nothing, String.Empty, ex.Message)
+        Return message.IndexOf("HTTP 401", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+            message.IndexOf("HTTP 403", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+            message.IndexOf("Bad credentials", StringComparison.OrdinalIgnoreCase) >= 0
     End Function
 
     Private Function GetSharedConfigurationWriteToken(templateKey As String) As String
