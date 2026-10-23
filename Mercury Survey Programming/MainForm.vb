@@ -638,9 +638,13 @@ Public Class MainForm
         AppLogger.Info("Super User upload started. Template: " & selectedTemplate.TemplateKey & "; Folder: " & _superFolderTextBox.Text.Trim())
 
         Dim uploadLockCreated = False
+        Dim uploadSucceeded = False
+        Dim uploadSummary As GithubRepositoryUploader.UploadSummary = Nothing
+        Dim uploadSummaryText = String.Empty
+        Dim uploadHadSkippedFiles = False
+        Dim uploadFailureText = String.Empty
 
         Try
-            Dim summary As GithubRepositoryUploader.UploadSummary = Nothing
             Dim allowRepositoryStructureReplace = resyncStructure
             Dim uploadCompleted = False
 
@@ -655,7 +659,7 @@ Public Class MainForm
 
             Do While Not uploadCompleted
                 Try
-                    summary = Await GithubRepositoryUploader.UploadDirectoryAsync(
+                    uploadSummary = Await GithubRepositoryUploader.UploadDirectoryAsync(
                         repositoryUrl,
                         repositoryBranch,
                         githubToken,
@@ -682,22 +686,15 @@ Public Class MainForm
             _superProgressBar.Style = ProgressBarStyle.Blocks
             _superProgressBar.MarqueeAnimationSpeed = 0
             _superProgressBar.Value = _superProgressBar.Maximum
-            _superCurrentOperationCaptionLabel.Text = "Current operation: Upload completed"
+            _superCurrentOperationCaptionLabel.Text = "Current operation: Finalizing upload..."
             _superStatusLabel.ForeColor = Color.ForestGreen
-            _superStatusLabel.Text = "Upload completed. Created: " & summary.Created & "; Updated: " & summary.Updated & "; Deleted: " & summary.Deleted & "; Skipped unchanged: " & summary.Skipped
-            AppLogger.Info("Super User upload completed. Created: " & summary.Created & "; Updated: " & summary.Updated & "; Deleted: " & summary.Deleted & "; Skipped unchanged: " & summary.Skipped)
-            If summary.Skipped > 0 Then
-                Dim logMessage = _superStatusLabel.Text & Environment.NewLine & Environment.NewLine &
-                    "Skipped unchanged files were written to the app log." & Environment.NewLine &
-                    "Open the log file now?"
-
-                If MessageBox.Show(Me, logMessage, "Upload Complete", MessageBoxButtons.YesNo, MessageBoxIcon.Information) = DialogResult.Yes Then
-                    OpenLogFile()
-                End If
-            Else
-                MessageBox.Show(Me, _superStatusLabel.Text, "Upload Complete", MessageBoxButtons.OK, MessageBoxIcon.Information)
-            End If
+            _superStatusLabel.Text = "Finalizing upload..."
+            uploadSummaryText = "Upload completed successfully. Created: " & uploadSummary.Created & "; Updated: " & uploadSummary.Updated & "; Deleted: " & uploadSummary.Deleted & "; Skipped unchanged: " & uploadSummary.Skipped
+            uploadHadSkippedFiles = uploadSummary.Skipped > 0
+            uploadSucceeded = True
+            AppLogger.Info("Super User upload completed. Created: " & uploadSummary.Created & "; Updated: " & uploadSummary.Updated & "; Deleted: " & uploadSummary.Deleted & "; Skipped unchanged: " & uploadSummary.Skipped)
         Catch ex As Exception
+            uploadFailureText = ex.Message
             _superProgressBar.Style = ProgressBarStyle.Blocks
             _superProgressBar.MarqueeAnimationSpeed = 0
             _superProgressBar.Value = 0
@@ -709,8 +706,35 @@ Public Class MainForm
         End Try
 
         If uploadLockCreated Then
-            SetSuperStatus("Removing shared upload lock...")
+            _superCurrentOperationCaptionLabel.Text = "Current operation: Finalizing upload..."
+            _superStatusLabel.Text = "Finalizing upload..."
             Await _settings.ClearTemplateUploadLockAsync(selectedTemplate.TemplateKey)
+        End If
+
+        If uploadSucceeded Then
+            _superResyncStructureCheckBox.Checked = False
+            _superProgressBar.Style = ProgressBarStyle.Blocks
+            _superProgressBar.MarqueeAnimationSpeed = 0
+            _superProgressBar.Value = _superProgressBar.Maximum
+            _superCurrentOperationCaptionLabel.Text = "Current operation: Upload completed"
+            _superStatusLabel.ForeColor = Color.ForestGreen
+            _superStatusLabel.Text = uploadSummaryText
+
+            If uploadHadSkippedFiles Then
+                Dim logMessage = uploadSummaryText & Environment.NewLine & Environment.NewLine &
+                    "Skipped unchanged files were written to the app log." & Environment.NewLine &
+                    "Open the log file now?"
+
+                If MessageBox.Show(Me, logMessage, "Upload Complete", MessageBoxButtons.YesNo, MessageBoxIcon.Information) = DialogResult.Yes Then
+                    OpenLogFile()
+                End If
+            Else
+                MessageBox.Show(Me, uploadSummaryText, "Upload Complete", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            End If
+        ElseIf Not String.IsNullOrWhiteSpace(uploadFailureText) Then
+            _superCurrentOperationCaptionLabel.Text = "Current operation: Upload failed"
+            _superStatusLabel.ForeColor = Color.Firebrick
+            _superStatusLabel.Text = uploadFailureText
         End If
 
         ToggleInputs(True)
