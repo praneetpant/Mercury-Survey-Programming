@@ -10,6 +10,9 @@ $root = Split-Path -Parent $PSScriptRoot
 $exePath = Join-Path $root 'Mercury Survey Programming\bin\Release\Mercury Survey Programming.exe'
 $manifestPath = Join-Path $PSScriptRoot 'Shared\app-update.json'
 $tokenPath = Join-Path $PSScriptRoot 'Shared\shared-config-token.txt'
+$githubAppConfigPath = Join-Path $PSScriptRoot 'Shared\github-app.json'
+
+. (Join-Path $PSScriptRoot 'github-app-auth.ps1')
 
 function ConvertFrom-SharedProtectedValue {
     param([string]$Value)
@@ -69,6 +72,15 @@ function Get-SharedToken {
     }
 
     return (ConvertFrom-SharedProtectedValue (($raw -split "`r?`n")[0].Trim())).Trim()
+}
+
+function Get-PublisherToken {
+    $appToken = Get-GitHubAppInstallationToken -ConfigPath $githubAppConfigPath
+    if (-not [string]::IsNullOrWhiteSpace($appToken)) {
+        return $appToken
+    }
+
+    return Get-SharedToken
 }
 
 function Invoke-GitHubJson {
@@ -156,9 +168,9 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
     throw 'Update manifest was not found.'
 }
 
-$token = Get-SharedToken
+$token = Get-PublisherToken
 if ([string]::IsNullOrWhiteSpace($token)) {
-    throw 'Shared GitHub token could not be read.'
+    throw 'GitHub publisher token could not be read.'
 }
 
 $script:headers = @{

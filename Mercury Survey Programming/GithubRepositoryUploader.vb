@@ -51,6 +51,28 @@ Public Class GithubRepositoryUploader
         Await PutFileAsync(repo, branch, relativePath, fileBytes, remoteFile.Sha, commitMessage, githubToken)
     End Function
 
+    Public Shared Async Function DeleteTextFileIfExistsAsync(repoUrl As String, branch As String, githubToken As String, relativePath As String, commitMessage As String) As Task
+        If String.IsNullOrWhiteSpace(githubToken) Then
+            Throw New ArgumentException("A GitHub token is required.")
+        End If
+
+        If String.IsNullOrWhiteSpace(branch) Then
+            branch = "main"
+        End If
+
+        If String.IsNullOrWhiteSpace(commitMessage) Then
+            commitMessage = "Delete " & relativePath
+        End If
+
+        Dim repo = ParseGithubRepository(repoUrl)
+        Dim remoteFile = Await GetRemoteFileInfoAsync(repo, branch, relativePath, githubToken)
+        If Not remoteFile.Exists Then
+            Return
+        End If
+
+        Await DeleteFileAsync(repo, branch, relativePath, remoteFile.Sha, commitMessage, githubToken)
+    End Function
+
     Public Shared Async Function UploadDirectoryAsync(repoUrl As String, branch As String, githubToken As String, sourceDirectory As String, commitMessage As String, progress As Action(Of UploadProgress), Optional allowRepositoryStructureReplace As Boolean = False) As Task(Of UploadSummary)
         If String.IsNullOrWhiteSpace(githubToken) Then
             Throw New ArgumentException("A GitHub token is required for upload.")

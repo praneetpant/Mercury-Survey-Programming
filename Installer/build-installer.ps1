@@ -8,6 +8,7 @@ $setupExe = Join-Path $outputDir 'Mercury Survey Programming Setup.exe'
 $redist = Join-Path $PSScriptRoot 'Redist\NDP48-x86-x64-AllOS-ENU.exe'
 $sharedRepositoriesJson = Join-Path $PSScriptRoot 'Shared\repositories.json'
 $sharedConfigurationTokenFile = Join-Path $PSScriptRoot 'Shared\shared-config-token.txt'
+$githubAppConfigFile = Join-Path $PSScriptRoot 'Shared\github-app.json'
 $includeSharedConfigurationToken = $env:MERCURY_INCLUDE_SHARED_TOKEN -eq '1'
 
 function Get-SignToolPath {
@@ -114,6 +115,10 @@ if ($includeSharedConfigurationToken -and (Test-Path -LiteralPath $sharedConfigu
     Set-Content -LiteralPath (Join-Path $sourceSetup 'shared-config-token.txt') -Value '' -Encoding ASCII
 }
 
+if (Test-Path -LiteralPath $githubAppConfigFile) {
+    Copy-Item -LiteralPath $githubAppConfigFile -Destination (Join-Path $sourceSetup 'github-app.json') -Force
+}
+
 if (Test-Path -LiteralPath $redist) {
     Copy-Item -LiteralPath $redist -Destination (Join-Path $sourceSetup 'NDP48-x86-x64-AllOS-ENU.exe') -Force
 }
@@ -173,6 +178,7 @@ FILE4="Mercury Survey Programming.exe"
 FILE5="repositories.json"
 FILE6="shared-config-token.txt"
 FILE7="NDP48-x86-x64-AllOS-ENU.exe"
+FILE8="github-app.json"
 [SourceFiles]
 SourceFiles0=$tempPackage\
 [SourceFiles0]
@@ -184,6 +190,7 @@ SourceFiles0=$tempPackage\
 %FILE5%=
 %FILE6%=
 %FILE7%=
+%FILE8%=
 "@
 
 Set-Content -LiteralPath $tempSed -Value $sedContent -Encoding ASCII

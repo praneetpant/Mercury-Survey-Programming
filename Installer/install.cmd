@@ -26,6 +26,7 @@ copy /Y "%SOURCE%\uninstall.cmd" "%TARGET%\" >nul
 if exist "%SOURCE%\Mercury Survey Programming.xml" copy /Y "%SOURCE%\Mercury Survey Programming.xml" "%TARGET%\" >nul
 if exist "%SOURCE%\repositories.json" copy /Y "%SOURCE%\repositories.json" "%TARGET%\" >nul
 if exist "%SOURCE%\shared-config-token.txt" copy /Y "%SOURCE%\shared-config-token.txt" "%TARGET%\" >nul
+if exist "%SOURCE%\github-app.json" copy /Y "%SOURCE%\github-app.json" "%TARGET%\" >nul
 if exist "%SOURCE%\Assets\MercuryLogo.ico" if not exist "%TARGET%\Assets" mkdir "%TARGET%\Assets"
 if exist "%SOURCE%\Assets\MercuryLogo.ico" copy /Y "%SOURCE%\Assets\MercuryLogo.ico" "%TARGET%\Assets\" >nul
 if exist "%SOURCE%\Assets\MercuryLogo.png" if not exist "%TARGET%\Assets" mkdir "%TARGET%\Assets"

@@ -50,6 +50,7 @@ Public Class MainForm
     Private ReadOnly _superFolderTextBox As New TextBox()
     Private ReadOnly _superBrowseButton As New Button()
     Private ReadOnly _superCommentTextBox As New TextBox()
+    Private ReadOnly _superResyncStructureCheckBox As New CheckBox()
     Private ReadOnly _superUploadButton As New Button()
     Private ReadOnly _superCurrentOperationCaptionLabel As New Label()
     Private ReadOnly _superProgressBar As New ProgressBar()
@@ -252,6 +253,10 @@ Public Class MainForm
         _superCommentTextBox.Multiline = True
         _superCommentTextBox.ScrollBars = ScrollBars.Vertical
 
+        _superResyncStructureCheckBox.Text = "Completely resync GitHub directory structure"
+        _superResyncStructureCheckBox.Location = New Point(158, 238)
+        _superResyncStructureCheckBox.Size = New Size(340, 24)
+
         _superUploadButton.Text = "Upload"
         _superUploadButton.Location = New Point(516, 244)
         _superUploadButton.Size = New Size(118, 34)
@@ -278,6 +283,7 @@ Public Class MainForm
             _superFolderTextBox,
             _superBrowseButton,
             _superCommentTextBox,
+            _superResyncStructureCheckBox,
             _superUploadButton,
             _superCurrentOperationCaptionLabel,
             _superProgressBar,
@@ -413,6 +419,9 @@ Public Class MainForm
                     overwrite:=False,
                     progress:=AddressOf SetStatus)
             Else
+                SetStatus("Checking whether a template upload is in progress...")
+                Await _settings.EnsureNoTemplateUploadInProgressAsync()
+
                 targetPath = Await GithubRepositoryDownloader.DownloadAsync(
                     repositoryUrl,
                     projectSaveLocation,
@@ -599,11 +608,19 @@ Public Class MainForm
             commitMessage &= ": " & userComment
         End If
 
+        Dim resyncStructure = _superResyncStructureCheckBox.Checked
+
         Dim confirmMessage = "Upload files from:" & Environment.NewLine & _superFolderTextBox.Text.Trim() & Environment.NewLine & Environment.NewLine &
             "To template: " & selectedTemplate.ToString() & Environment.NewLine &
             "Branch: " & If(String.IsNullOrWhiteSpace(repositoryBranch), "main", repositoryBranch) & Environment.NewLine & Environment.NewLine &
-            "Commit message: " & commitMessage & Environment.NewLine & Environment.NewLine &
-            "This mirrors the selected folder to GitHub. Files missing from the selected folder will be deleted from GitHub, except protected/skipped files."
+            "Commit message: " & commitMessage & Environment.NewLine & Environment.NewLine
+
+        If resyncStructure Then
+            confirmMessage &= "Complete directory structure resync is selected." & Environment.NewLine &
+                "GitHub will be rebuilt to match the selected folder. Files missing from the selected folder will be deleted from GitHub, except protected/skipped files."
+        Else
+            confirmMessage &= "This uploads matching files and keeps the existing GitHub top-level structure check enabled. Files missing from the selected folder will be deleted from GitHub only after the selected folder matches the repository structure."
+        End If
 
         If MessageBox.Show(Me, confirmMessage, "Confirm Upload", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) <> DialogResult.OK Then
             Return
@@ -620,10 +637,21 @@ Public Class MainForm
         _superCurrentOperationCaptionLabel.Text = "Current operation: Starting upload..."
         AppLogger.Info("Super User upload started. Template: " & selectedTemplate.TemplateKey & "; Folder: " & _superFolderTextBox.Text.Trim())
 
+        Dim uploadLockCreated = False
+
         Try
             Dim summary As GithubRepositoryUploader.UploadSummary = Nothing
-            Dim allowRepositoryStructureReplace = False
+            Dim allowRepositoryStructureReplace = resyncStructure
             Dim uploadCompleted = False
+
+            SetSuperStatus("Creating shared upload lock...")
+            Await _settings.CreateTemplateUploadLockAsync(selectedTemplate.TemplateKey, selectedTemplate.ToString(), repositoryUrl, uploadUser)
+            uploadLockCreated = True
+
+            If allowRepositoryStructureReplace Then
+                AppLogger.Info("Super User upload full directory structure resync option selected.")
+                SetSuperUploadProgress(New GithubRepositoryUploader.UploadProgress With {.Message = "Full directory structure resync selected...", .Current = 0, .Total = 0})
+            End If
 
             Do While Not uploadCompleted
                 Try
@@ -678,11 +706,16 @@ Public Class MainForm
             _superStatusLabel.Text = ex.Message
             AppLogger.Error("Super User upload failed.", ex)
             MessageBox.Show(Me, ex.Message, "Upload Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning)
-        Finally
-            ToggleInputs(True)
-            ToggleSuperInputs(True)
-            UpdateModeUi()
         End Try
+
+        If uploadLockCreated Then
+            SetSuperStatus("Removing shared upload lock...")
+            Await _settings.ClearTemplateUploadLockAsync(selectedTemplate.TemplateKey)
+        End If
+
+        ToggleInputs(True)
+        ToggleSuperInputs(True)
+        UpdateModeUi()
     End Function
 
     Private Sub OpenLogFile()
@@ -937,6 +970,7 @@ Public Class MainForm
         _superFolderTextBox.Enabled = enabled
         _superBrowseButton.Enabled = enabled
         _superCommentTextBox.Enabled = enabled
+        _superResyncStructureCheckBox.Enabled = enabled
         _superUploadButton.Enabled = enabled
     End Sub
 

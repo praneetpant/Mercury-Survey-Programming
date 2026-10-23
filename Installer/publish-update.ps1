@@ -3,15 +3,18 @@ $ErrorActionPreference = 'Stop'
 $owner = 'praneetpant'
 $repo = 'setupshared'
 $branch = 'main'
-$tag = 'v1.2.13'
-$releaseName = 'Mercury Survey Programming v1.2.13'
-$setupAssetName = 'setup-v1.2.13.exe'
-$exeAssetName = 'Mercury Survey Programming v1.2.13.exe'
+$tag = 'v1.2.17'
+$releaseName = 'Mercury Survey Programming v1.2.17'
+$setupAssetName = 'setup-v1.2.17.exe'
+$exeAssetName = 'Mercury Survey Programming v1.2.17.exe'
 $root = Split-Path -Parent $PSScriptRoot
 $setupPath = Join-Path $PSScriptRoot 'Output\Mercury Survey Programming Setup.exe'
 $exePath = Join-Path $root 'Mercury Survey Programming\bin\Release\Mercury Survey Programming.exe'
 $manifestPath = Join-Path $PSScriptRoot 'Shared\app-update.json'
 $tokenPath = Join-Path $PSScriptRoot 'Shared\shared-config-token.txt'
+$githubAppConfigPath = Join-Path $PSScriptRoot 'Shared\github-app.json'
+
+. (Join-Path $PSScriptRoot 'github-app-auth.ps1')
 
 function ConvertFrom-SharedProtectedValue {
     param([string]$Value)
@@ -71,6 +74,15 @@ function Get-SharedToken {
     }
 
     return (ConvertFrom-SharedProtectedValue (($raw -split "`r?`n")[0].Trim())).Trim()
+}
+
+function Get-PublisherToken {
+    $appToken = Get-GitHubAppInstallationToken -ConfigPath $githubAppConfigPath
+    if (-not [string]::IsNullOrWhiteSpace($appToken)) {
+        return $appToken
+    }
+
+    return Get-SharedToken
 }
 
 function Invoke-GitHubJson {
@@ -174,9 +186,9 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
     throw 'Update manifest was not found.'
 }
 
-$token = Get-SharedToken
+$token = Get-PublisherToken
 if ([string]::IsNullOrWhiteSpace($token)) {
-    throw 'Shared GitHub token could not be read.'
+    throw 'GitHub publisher token could not be read.'
 }
 
 $script:headers = @{
@@ -209,7 +221,7 @@ Remove-ExistingAsset -Release $release -Name $setupAssetName
 Remove-ExistingAsset -Release $release -Name $exeAssetName
 Add-ReleaseAsset -Release $release -Path $setupPath -Name $setupAssetName
 Add-ReleaseAsset -Release $release -Path $exePath -Name $exeAssetName
-Update-RepositoryFile -RepositoryPath 'app-update.json' -LocalPath $manifestPath -Message 'Update app auto-update manifest to v1.2.13'
+Update-RepositoryFile -RepositoryPath 'app-update.json' -LocalPath $manifestPath -Message 'Update app auto-update manifest to v1.2.17'
 
 [pscustomobject]@{
     Release = $release.html_url

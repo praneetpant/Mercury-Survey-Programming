@@ -1,5 +1,6 @@
 Imports System
 Imports System.Collections.Generic
+Imports System.Globalization
 Imports System.IO
 Imports System.Linq
 Imports System.Reflection
@@ -20,6 +21,9 @@ Public Class AppSettings
     Private Const SharedConfigurationBranch As String = "main"
     Private Const SuperUsersRepositoryPath As String = "superusers.json"
     Private Const RepositoryMappingsRepositoryPath As String = "repositories.json"
+    Private Const UploadLockRepositoryPath As String = "upload-lock.json"
+    Private Const UploadLockRetryMinutes As Integer = 5
+    Private Const UploadLockStaleMinutes As Integer = 60
     Private Const SharedConfigurationTokenFileName As String = "shared-config-token.txt"
     Private Const RequiredSaveRootFolderName As String = "Mercury Survey Programming"
     Private Const SharedProtectedPrefix As String = "shared:v1:"
@@ -286,7 +290,12 @@ Public Class AppSettings
             Return Nothing
         End If
 
-        Return mapping.GetGithubToken(templateKey)
+        Dim savedToken = mapping.GetGithubToken(templateKey)
+        If Not String.IsNullOrWhiteSpace(savedToken) Then
+            Return savedToken
+        End If
+
+        Return GetGithubAppInstallationToken()
     End Function
 
     Public Function GetTemplateInfoForDimensionsUrl(dimensionsUrl As String, templateKey As String) As RepositoryTemplateInfo
@@ -578,13 +587,112 @@ Public Class AppSettings
             "Update superuser list")
     End Function
 
+    Public Async Function EnsureNoTemplateUploadInProgressAsync() As Task
+        Dim syncToken = GetSharedConfigurationToken()
+        Dim json = Await GithubRepositoryUploader.DownloadTextFileAsync(SharedConfigurationRepositoryUrl, SharedConfigurationBranch, syncToken, UploadLockRepositoryPath)
+        If String.IsNullOrWhiteSpace(json) Then
+            Return
+        End If
+
+        Dim properties = ParseJsonObjectProperties(json)
+        Dim createdUtc = ParseUtcDate(GetJsonPropertyString(properties, "createdUtc"))
+        Dim notBeforeUtc = ParseUtcDate(GetJsonPropertyString(properties, "notBeforeUtc"))
+
+        If createdUtc.HasValue AndAlso DateTime.UtcNow.Subtract(createdUtc.Value).TotalMinutes > UploadLockStaleMinutes Then
+            AppLogger.Info("Template upload lock is stale. Attempting to clear it before download.")
+            Await ClearTemplateUploadLockAsync(GetJsonPropertyString(properties, "templateKey"))
+            Return
+        End If
+
+        Dim uploader = GetJsonPropertyString(properties, "username")
+        Dim templateName = GetJsonPropertyString(properties, "templateName")
+        Dim machineName = GetJsonPropertyString(properties, "machine")
+        Dim message = "A template upload is currently in progress." & Environment.NewLine & Environment.NewLine &
+            "Downloads are temporarily locked so you do not copy a partial template update." & Environment.NewLine &
+            "Please try download after " & UploadLockRetryMinutes.ToString() & " minutes."
+
+        If notBeforeUtc.HasValue Then
+            message &= Environment.NewLine & "Do not download before: " & notBeforeUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+        End If
+
+        If Not String.IsNullOrWhiteSpace(templateName) Then
+            message &= Environment.NewLine & "Template: " & templateName
+        End If
+
+        If Not String.IsNullOrWhiteSpace(uploader) Then
+            message &= Environment.NewLine & "Upload started by: " & uploader
+        End If
+
+        If Not String.IsNullOrWhiteSpace(machineName) Then
+            message &= Environment.NewLine & "Machine: " & machineName
+        End If
+
+        Throw New AppUserMessageException(message)
+    End Function
+
+    Public Async Function CreateTemplateUploadLockAsync(templateKey As String, templateName As String, repositoryUrl As String, username As String) As Task
+        Dim githubToken = GetSharedConfigurationWriteToken(templateKey)
+        If String.IsNullOrWhiteSpace(githubToken) Then
+            Throw New AppUserMessageException("Could not create the shared upload lock because GitHub write access is not available.")
+        End If
+
+        Dim createdUtc = DateTime.UtcNow
+        Dim lines = New List(Of String) From {
+            "{",
+            "  ""createdUtc"": """ & EscapeJsonString(createdUtc.ToString("o")) & """,",
+            "  ""notBeforeUtc"": """ & EscapeJsonString(createdUtc.AddMinutes(UploadLockRetryMinutes).ToString("o")) & """,",
+            "  ""username"": """ & EscapeJsonString(username) & """,",
+            "  ""templateKey"": """ & EscapeJsonString(templateKey) & """,",
+            "  ""templateName"": """ & EscapeJsonString(templateName) & """,",
+            "  ""repositoryUrl"": """ & EscapeJsonString(repositoryUrl) & """,",
+            "  ""machine"": """ & EscapeJsonString(Environment.MachineName) & """",
+            "}"
+        }
+
+        Await GithubRepositoryUploader.UploadTextFileAsync(
+            SharedConfigurationRepositoryUrl,
+            SharedConfigurationBranch,
+            githubToken,
+            UploadLockRepositoryPath,
+            String.Join(Environment.NewLine, lines.ToArray()),
+            "Create template upload lock")
+
+        AppLogger.Info("Created shared template upload lock.")
+    End Function
+
+    Public Async Function ClearTemplateUploadLockAsync(templateKey As String) As Task
+        Try
+            Dim githubToken = GetSharedConfigurationWriteToken(templateKey)
+            If String.IsNullOrWhiteSpace(githubToken) Then
+                AppLogger.Info("Could not clear shared template upload lock because no shared write token is available.")
+                Return
+            End If
+
+            Await GithubRepositoryUploader.DeleteTextFileIfExistsAsync(
+                SharedConfigurationRepositoryUrl,
+                SharedConfigurationBranch,
+                githubToken,
+                UploadLockRepositoryPath,
+                "Remove template upload lock")
+
+            AppLogger.Info("Removed shared template upload lock.")
+        Catch ex As Exception
+            AppLogger.Error("Could not remove shared template upload lock.", ex)
+        End Try
+    End Function
+
     Private Function GetSharedConfigurationWriteToken(templateKey As String) As String
         Dim savedSharedToken = GetSharedConfigurationGithubToken()
         If Not String.IsNullOrWhiteSpace(savedSharedToken) Then
             Return savedSharedToken
         End If
 
-        Return LoadSharedConfigurationGithubToken()
+        Dim bundledSharedToken = LoadSharedConfigurationGithubToken()
+        If Not String.IsNullOrWhiteSpace(bundledSharedToken) Then
+            Return bundledSharedToken
+        End If
+
+        Return GetGithubAppInstallationToken()
     End Function
 
     Private Function GetFirstRepositoryAccessForDimensionsUrl(dimensionsUrl As String) As RepositoryAccessInfo
@@ -627,7 +735,16 @@ Public Class AppSettings
             Return savedSharedToken
         End If
 
-        Return String.Empty
+        Return GetGithubAppInstallationToken()
+    End Function
+
+    Private Shared Function GetGithubAppInstallationToken() As String
+        Try
+            Return GithubAppAuthenticator.GetInstallationToken()
+        Catch ex As Exception
+            AppLogger.Error("Could not get GitHub App installation token.", ex)
+            Return String.Empty
+        End Try
     End Function
 
     Private Function GetFirstRepositoryAccessCandidate() As RepositoryAccessInfo
@@ -1166,6 +1283,19 @@ Public Class AppSettings
     Private Shared Function GetJsonPropertyString(properties As Dictionary(Of String, String), propertyName As String) As String
         If properties.ContainsKey(propertyName) Then
             Return UnquoteJsonString(properties(propertyName))
+        End If
+
+        Return Nothing
+    End Function
+
+    Private Shared Function ParseUtcDate(value As String) As DateTime?
+        If String.IsNullOrWhiteSpace(value) Then
+            Return Nothing
+        End If
+
+        Dim parsedValue As DateTime
+        If DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal Or DateTimeStyles.AdjustToUniversal, parsedValue) Then
+            Return parsedValue
         End If
 
         Return Nothing

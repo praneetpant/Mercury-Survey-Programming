@@ -12,9 +12,13 @@ Installer/Redist/
 Installer/Shared/shared-config-token.txt
 Installer/Shared/source-repo-token.txt
 Installer/Shared/token-backup.json
+Installer/Shared/github-app.json
+Installer/Shared/*.pem
 **/shared-config-token.txt
 **/source-repo-token.txt
 **/token-backup.json
+**/github-app.json
+**/*.private-key.pem
 
 *.xlsx
 *.xls
