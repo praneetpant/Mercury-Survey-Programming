@@ -14,13 +14,13 @@ Public Class GithubRepositoryDownloader
     Private Const FileRetryAttempts As Integer = 60
     Private Const FileRetryDelayMilliseconds As Integer = 1000
 
-    Public Shared Async Function CopyExistingProjectAsync(existingProjectPath As String, destinationParent As String, projectName As String, overwrite As Boolean, progress As Action(Of String)) As Task(Of String)
+    Public Shared Async Function CopyExistingProjectAsync(existingProjectPath As String, destinationParent As String, projectName As String, overwrite As Boolean, progress As Action(Of String), Optional allowExistingProjectNumber As Boolean = False) As Task(Of String)
         Return Await Task.Run(Function()
-                                  Return CopyExistingProject(existingProjectPath, destinationParent, projectName, overwrite, progress)
+                                  Return CopyExistingProject(existingProjectPath, destinationParent, projectName, overwrite, progress, allowExistingProjectNumber)
                               End Function)
     End Function
 
-    Private Shared Function CopyExistingProject(existingProjectPath As String, destinationParent As String, projectName As String, overwrite As Boolean, progress As Action(Of String)) As String
+    Private Shared Function CopyExistingProject(existingProjectPath As String, destinationParent As String, projectName As String, overwrite As Boolean, progress As Action(Of String), allowExistingProjectNumber As Boolean) As String
         ValidateProjectName(projectName)
 
         If String.IsNullOrWhiteSpace(existingProjectPath) Then
@@ -37,7 +37,7 @@ Public Class GithubRepositoryDownloader
             Throw New DirectoryNotFoundException("Existing project folder was not found: " & sourcePath)
         End If
 
-        Dim folderPlan = CreateProjectFolderPlan(fullDestinationParent, projectName)
+        Dim folderPlan = CreateProjectFolderPlan(fullDestinationParent, projectName, allowExistingProjectNumber)
         Dim targetPath = folderPlan.TargetPath
         EnsureTargetIsInsideDestination(fullDestinationParent, targetPath)
 
@@ -64,7 +64,7 @@ Public Class GithubRepositoryDownloader
 
             If folderPlan.ShouldArchiveExistingBaseFolder Then
                 progress?.Invoke("Copying existing project folder contents to " & folderPlan.ArchivePath & "...")
-                ArchiveExistingBaseFolder(folderPlan.BasePath, folderPlan.ArchivePath, folderPlan.TargetPath)
+                ArchiveExistingBaseFolder(folderPlan.BasePath, folderPlan.ArchivePath, folderPlan.TargetPath, folderPlan.ProjectNumber)
             End If
 
             progress?.Invoke("Placing finished project in " & targetPath & "...")
@@ -79,7 +79,7 @@ Public Class GithubRepositoryDownloader
         End Try
     End Function
 
-    Public Shared Async Function DownloadAsync(repoUrl As String, destinationParent As String, projectName As String, branch As String, githubToken As String, overwrite As Boolean, shouldRenameTextInstances As Boolean, textToReplace As String, progress As Action(Of String)) As Task(Of String)
+    Public Shared Async Function DownloadAsync(repoUrl As String, destinationParent As String, projectName As String, branch As String, githubToken As String, overwrite As Boolean, shouldRenameTextInstances As Boolean, textToReplace As String, progress As Action(Of String), Optional allowExistingProjectNumber As Boolean = False) As Task(Of String)
         ValidateProjectName(projectName)
 
         If String.IsNullOrWhiteSpace(destinationParent) Then
@@ -87,7 +87,7 @@ Public Class GithubRepositoryDownloader
         End If
 
         Dim fullDestinationParent = Path.GetFullPath(destinationParent)
-        Dim folderPlan = CreateProjectFolderPlan(fullDestinationParent, projectName)
+        Dim folderPlan = CreateProjectFolderPlan(fullDestinationParent, projectName, allowExistingProjectNumber)
         Dim targetPath = folderPlan.TargetPath
         EnsureTargetIsInsideDestination(fullDestinationParent, targetPath)
 
@@ -142,7 +142,7 @@ Public Class GithubRepositoryDownloader
 
             If folderPlan.ShouldArchiveExistingBaseFolder Then
                 progress?.Invoke("Copying existing project folder contents to " & folderPlan.ArchivePath & "...")
-                ArchiveExistingBaseFolder(folderPlan.BasePath, folderPlan.ArchivePath, folderPlan.TargetPath)
+                ArchiveExistingBaseFolder(folderPlan.BasePath, folderPlan.ArchivePath, folderPlan.TargetPath, folderPlan.ProjectNumber)
             End If
 
             progress?.Invoke("Placing finished project in " & targetPath & "...")
@@ -409,18 +409,39 @@ Public Class GithubRepositoryDownloader
         Return Path.GetFullPath(Path.Combine(destinationParent, cleanedPath))
     End Function
 
-    Private Shared Function CreateProjectFolderPlan(destinationParent As String, projectName As String) As ProjectFolderPlan
-        Dim match = Regex.Match(projectName, "(?<number>\d{4,5})\s*(?<letter>[A-Za-z]?)")
+    Public Shared Function GetProjectConflictInfo(destinationParent As String, projectName As String) As ProjectConflictInfo
+        ValidateProjectName(projectName)
+
+        If String.IsNullOrWhiteSpace(destinationParent) Then
+            Throw New ArgumentException("Save location is required.")
+        End If
+
+        Dim folderPlan = CreateProjectFolderPlan(Path.GetFullPath(destinationParent), projectName, allowExistingProjectNumber:=True)
+        If Not folderPlan.ShouldArchiveExistingBaseFolder Then
+            Return Nothing
+        End If
+
+        Return New ProjectConflictInfo With {
+            .ProjectNumber = folderPlan.ProjectNumber,
+            .ExistingProjectNumberPath = folderPlan.BasePath,
+            .ArchivePath = folderPlan.ArchivePath,
+            .ProposedTargetPath = folderPlan.TargetPath
+        }
+    End Function
+
+    Private Shared Function CreateProjectFolderPlan(destinationParent As String, projectName As String, allowExistingProjectNumber As Boolean) As ProjectFolderPlan
+        Dim match = Regex.Match(projectName, "(?<number>\d{4,5})")
         If Not match.Success Then
             Throw New ArgumentException("Project name must contain a 4 or 5 digit project number.")
         End If
 
         Dim projectNumber = match.Groups("number").Value
-        Dim nextAlphabet = match.Groups("letter").Value
+        Dim requestedAlphabet = GetRequestedProjectRevisionLetter(projectName, projectNumber)
         Dim basePath = Path.GetFullPath(Path.Combine(destinationParent, projectNumber))
 
         If Not Directory.Exists(basePath) Then
             Return New ProjectFolderPlan With {
+                .ProjectNumber = projectNumber,
                 .BasePath = basePath,
                 .TargetPath = basePath,
                 .ArchivePath = Nothing,
@@ -428,15 +449,20 @@ Public Class GithubRepositoryDownloader
             }
         End If
 
-        If String.IsNullOrWhiteSpace(nextAlphabet) Then
-            Throw New ArgumentException("Project number folder already exists. Include the next alphabet after the number, for example " & projectNumber & "A.")
+        If Not allowExistingProjectNumber Then
+            Throw New ProjectAlreadyExistsException(GetProjectConflictInfo(destinationParent, projectName))
         End If
 
-        Dim requestedProjectFolder = projectNumber & nextAlphabet.ToUpperInvariant()
+        Dim requestedProjectFolder = GetNextAvailableAlphabetFolder(basePath, projectNumber, requestedAlphabet)
+        If String.IsNullOrWhiteSpace(requestedProjectFolder) Then
+            Throw New AppUserMessageException("Project number folder already exists, and no available A-Z project folder could be found inside " & basePath & ".")
+        End If
+
         Dim archivePath = Path.GetFullPath(Path.Combine(basePath, projectNumber))
         Dim targetPath = Path.GetFullPath(Path.Combine(basePath, requestedProjectFolder))
 
         Return New ProjectFolderPlan With {
+            .ProjectNumber = projectNumber,
             .BasePath = basePath,
             .ArchivePath = archivePath,
             .TargetPath = targetPath,
@@ -445,7 +471,11 @@ Public Class GithubRepositoryDownloader
     End Function
 
     Private Shared Function GetNextAvailableAlphabetFolder(basePath As String, projectNumber As String, requestedAlphabet As String) As String
-        Dim startCode = Convert.ToInt32(Char.ToUpperInvariant(requestedAlphabet(0))) + 1
+        Dim startCode = Convert.ToInt32("A"c)
+        If Not String.IsNullOrWhiteSpace(requestedAlphabet) Then
+            startCode = Convert.ToInt32(Char.ToUpperInvariant(requestedAlphabet(0)))
+        End If
+
         For letterCode As Integer = startCode To 90
             Dim candidateName = projectNumber & Convert.ToChar(letterCode)
             Dim candidatePath = Path.Combine(basePath, candidateName)
@@ -455,6 +485,16 @@ Public Class GithubRepositoryDownloader
         Next
 
         Return Nothing
+    End Function
+
+    Private Shared Function GetRequestedProjectRevisionLetter(projectName As String, projectNumber As String) As String
+        Dim cleanedName = GetAlphanumericProjectName(projectName).ToUpperInvariant()
+        Dim match = Regex.Match(cleanedName, "^(?:MA)?" & Regex.Escape(projectNumber) & "(?<letter>[A-Z])?$", RegexOptions.IgnoreCase)
+        If match.Success AndAlso match.Groups("letter").Success Then
+            Return match.Groups("letter").Value.ToUpperInvariant()
+        End If
+
+        Return String.Empty
     End Function
 
     Private Shared Sub MoveExistingTargetToOldFolder(targetPath As String, progress As Action(Of String))
@@ -489,17 +529,47 @@ Public Class GithubRepositoryDownloader
         Return targetPath & ".old" & DateTime.Now.ToString("ddMMyyHHmmss") & "." & Guid.NewGuid().ToString("N")
     End Function
 
-    Private Shared Sub ArchiveExistingBaseFolder(basePath As String, archivePath As String, newTargetPath As String)
+    Private Shared Sub ArchiveExistingBaseFolder(basePath As String, archivePath As String, newTargetPath As String, projectNumber As String)
         If Directory.Exists(archivePath) Then
             Return
         End If
 
         Directory.CreateDirectory(archivePath)
-        CopyDirectoryContents(basePath, archivePath, New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
+        MoveDirectoryContents(basePath, archivePath, projectNumber, New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
             Path.GetFullPath(archivePath),
             Path.GetFullPath(newTargetPath)
         })
     End Sub
+
+    Private Shared Sub MoveDirectoryContents(sourceDirectory As String, targetDirectory As String, projectNumber As String, excludedFullPaths As HashSet(Of String))
+        RunWithRetry("Creating folder " & targetDirectory, Sub() Directory.CreateDirectory(targetDirectory), Nothing)
+
+        For Each entryPath As String In Directory.GetFileSystemEntries(sourceDirectory)
+            Dim fullEntryPath = Path.GetFullPath(entryPath)
+            If excludedFullPaths.Contains(fullEntryPath) Then
+                Continue For
+            End If
+
+            If Directory.Exists(entryPath) AndAlso IsProjectRevisionFolderName(Path.GetFileName(entryPath), projectNumber) Then
+                Continue For
+            End If
+
+            Dim destinationPath = Path.Combine(targetDirectory, Path.GetFileName(entryPath))
+            If Directory.Exists(destinationPath) OrElse File.Exists(destinationPath) Then
+                destinationPath = GetAvailableOldPath(destinationPath)
+            End If
+
+            If Directory.Exists(entryPath) Then
+                RunWithRetry("Moving existing project folder to " & destinationPath, Sub() Directory.Move(entryPath, destinationPath), Nothing)
+            Else
+                RunWithRetry("Moving existing project file to " & destinationPath, Sub() File.Move(entryPath, destinationPath), Nothing)
+            End If
+        Next
+    End Sub
+
+    Private Shared Function IsProjectRevisionFolderName(folderName As String, projectNumber As String) As Boolean
+        Return Regex.IsMatch(If(folderName, String.Empty), "^" & Regex.Escape(projectNumber) & "[A-Z]?$", RegexOptions.IgnoreCase)
+    End Function
 
     Private Shared Sub CopyDirectory(sourceDirectory As String, targetDirectory As String, Optional progress As Action(Of String) = Nothing)
         RunWithRetry("Creating folder " & targetDirectory, Sub() Directory.CreateDirectory(targetDirectory), progress)
@@ -935,10 +1005,43 @@ Public Class GithubRepositoryDownloader
     End Class
 
     Private Class ProjectFolderPlan
+        Public Property ProjectNumber As String
         Public Property BasePath As String
         Public Property ArchivePath As String
         Public Property TargetPath As String
         Public Property ShouldArchiveExistingBaseFolder As Boolean
+    End Class
+
+    Public Class ProjectConflictInfo
+        Public Property ProjectNumber As String
+        Public Property ExistingProjectNumberPath As String
+        Public Property ArchivePath As String
+        Public Property ProposedTargetPath As String
+    End Class
+
+    Public Class ProjectAlreadyExistsException
+        Inherits AppUserMessageException
+
+        Public ReadOnly Property ConflictInfo As ProjectConflictInfo
+
+        Public Sub New(conflictInfo As ProjectConflictInfo)
+            MyBase.New(BuildMessage(conflictInfo))
+            Me.ConflictInfo = conflictInfo
+        End Sub
+
+        Private Shared Function BuildMessage(conflictInfo As ProjectConflictInfo) As String
+            If conflictInfo Is Nothing Then
+                Return "Project already exists."
+            End If
+
+            Return "Project " & conflictInfo.ProjectNumber & " already exists." & Environment.NewLine & Environment.NewLine &
+                "If you continue, existing loose content inside:" & Environment.NewLine &
+                conflictInfo.ExistingProjectNumberPath & Environment.NewLine & Environment.NewLine &
+                "will be moved to:" & Environment.NewLine &
+                conflictInfo.ArchivePath & Environment.NewLine & Environment.NewLine &
+                "and the new project will be created as:" & Environment.NewLine &
+                conflictInfo.ProposedTargetPath
+        End Function
     End Class
 
 End Class

@@ -404,6 +404,32 @@ Public Class MainForm
             Return
         End If
 
+        Dim allowExistingProjectNumber = False
+        Try
+            Dim conflictInfo = GithubRepositoryDownloader.GetProjectConflictInfo(projectSaveLocation, projectName)
+            If conflictInfo IsNot Nothing Then
+                Dim conflictMessage = "Project " & conflictInfo.ProjectNumber & " already exists." & Environment.NewLine & Environment.NewLine &
+                    "Do you still want to create a new project?" & Environment.NewLine & Environment.NewLine &
+                    "Existing loose content inside:" & Environment.NewLine &
+                    conflictInfo.ExistingProjectNumberPath & Environment.NewLine & Environment.NewLine &
+                    "will be moved to:" & Environment.NewLine &
+                    conflictInfo.ArchivePath & Environment.NewLine & Environment.NewLine &
+                    "The new project will be created as:" & Environment.NewLine &
+                    conflictInfo.ProposedTargetPath
+
+                If MessageBox.Show(Me, conflictMessage, "Project Already Exists", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) <> DialogResult.Yes Then
+                    AppLogger.Info("Project operation cancelled because project number already exists: " & conflictInfo.ProjectNumber)
+                    Return
+                End If
+
+                allowExistingProjectNumber = True
+            End If
+        Catch ex As Exception
+            MessageBox.Show(Me, ex.Message, "Project Folder Check Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            AppLogger.Error("Project operation blocked during duplicate project check.", ex)
+            Return
+        End Try
+
         ToggleInputs(False)
         AppLogger.Info("Project operation started. Mode: " & If(_copyProjectRadioButton.Checked, "Copy Project", "New Project") & "; Template: " & selectedTemplateName & "; Project name: " & projectName & "; Save location: " & projectSaveLocation)
         StartWorkingAnimation("Starting")
@@ -417,7 +443,8 @@ Public Class MainForm
                     projectSaveLocation,
                     projectName,
                     overwrite:=False,
-                    progress:=AddressOf SetStatus)
+                    progress:=AddressOf SetStatus,
+                    allowExistingProjectNumber:=allowExistingProjectNumber)
             Else
                 SetStatus("Checking whether a template upload is in progress...")
                 Await _settings.EnsureNoTemplateUploadInProgressAsync()
@@ -431,14 +458,22 @@ Public Class MainForm
                     overwrite:=False,
                     shouldRenameTextInstances:=True,
                     textToReplace:=If(String.IsNullOrWhiteSpace(oldMddName), NewProjectTextToReplace, oldMddName),
-                    progress:=AddressOf SetStatus)
+                    progress:=AddressOf SetStatus,
+                    allowExistingProjectNumber:=allowExistingProjectNumber)
             End If
 
             StopWorkingAnimation()
             _statusLabel.ForeColor = Color.ForestGreen
             _statusLabel.Text = "Completed: " & targetPath
             AppLogger.Info("Project operation completed. Target path: " & targetPath)
-            MessageBox.Show(Me, "Project saved to:" & Environment.NewLine & targetPath, "Project Ready", MessageBoxButtons.OK, MessageBoxIcon.Information)
+            Dim closeMessage = "Project saved to:" & Environment.NewLine & targetPath & Environment.NewLine & Environment.NewLine &
+                "Close Mercury Survey Programming now?"
+            If MessageBox.Show(Me, closeMessage, "Project Ready", MessageBoxButtons.YesNo, MessageBoxIcon.Information) = DialogResult.Yes Then
+                Close()
+                Return
+            End If
+
+            ClearProjectTabFields()
         Catch ex As Exception
             StopWorkingAnimation()
             _statusLabel.ForeColor = Color.Firebrick
@@ -450,6 +485,21 @@ Public Class MainForm
             UpdateModeUi()
         End Try
     End Function
+
+    Private Sub ClearProjectTabFields()
+        _projectNameTextBox.Text = String.Empty
+        _existingProjectTextBox.Text = String.Empty
+        _newProjectRadioButton.Checked = True
+        _copyProjectRadioButton.Checked = False
+        _progressBar.MarqueeAnimationSpeed = 0
+        _progressBar.Style = ProgressBarStyle.Blocks
+        _progressBar.Value = 0
+        _currentOperationCaptionLabel.Text = "Current operation"
+        _statusLabel.ForeColor = Color.DimGray
+        _statusLabel.Text = String.Empty
+        UpdateModeUi()
+        _projectNameTextBox.Focus()
+    End Sub
 
     Private Sub OptionsButton_Click(sender As Object, e As EventArgs)
         Dim oldDimensionsUrl = _settings.DimensionsUrl
